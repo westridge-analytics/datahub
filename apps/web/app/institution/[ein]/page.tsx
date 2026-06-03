@@ -1,15 +1,21 @@
 import type { Organization, Filing } from '@/types'
 import InstitutionView from '@/components/institution/InstitutionView'
+import { sql } from '@/lib/db'
 
 async function fetchInstitutionData(ein: string): Promise<{
   organization: Organization
   filings: Filing[]
 } | null> {
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000'
   try {
-    const res = await fetch(`${baseUrl}/api/filings/${ein}`, { cache: 'no-store' })
-    if (!res.ok) return null
-    return res.json()
+    const [orgRows, filingRows] = await Promise.all([
+      sql`SELECT * FROM organizations WHERE ein = ${ein}`,
+      sql`SELECT * FROM filings WHERE ein = ${ein} ORDER BY fiscal_year ASC`,
+    ])
+    if (orgRows.length === 0) return null
+    return {
+      organization: orgRows[0] as Organization,
+      filings: filingRows as Filing[],
+    }
   } catch {
     return null
   }
