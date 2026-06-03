@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Westridge 990 Research App — Wireframes</title>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { font-family: 'Avenir Next', 'Avenir', -apple-system, 'Helvetica Neue', Helvetica, sans-serif; background: #F2F0EC; color: #1A1916; font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    button { font-family: inherit; cursor: pointer; }
+    input, select { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #CCC9C3; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+// ─── Design Tokens ────────────────────────────────────────────────────────────
+const C = {
+  navBg:        '#203E46',
+  navText:      '#7AAEBB',
+  navActive:    'rgba(111,153,204,0.18)',
+  navActiveTxt: '#F2F4F1',
+  bg:           '#F2F4F1',
+  surface:      '#FFFFFF',
+  surfAlt:      '#F2F4F1',
+  secBg:        '#D7E8EE',
+  border:       '#BDD3DC',
+  text1:        '#10232B',
+  text2:        '#3D5A63',
+  text3:        '#7A9AA4',
+  accent:       '#6F99CC',
+  accentMid:    '#5580B0',
+  accentLt:     '#E4EEF8',
+  accentBdr:    '#AECAE0',
+  warn:         '#7A5C3A',
+  warnLt:       '#F3EAE0',
+  warnBdr:      '#C4A882',
+  err:          '#B83228',
+  errLt:        '#FAEBE9',
+  chart:        ['#203E46','#6F99CC','#A78B70','#4A8A6A','#8A5A8A'],
+};
+
+// Helpers
+const fmt = (n, dp = 1) => {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n), sign = n < 0 ? '−' : '';
+  if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(dp)}B`;
+  if (abs >= 1)    return `${sign}$${abs.toFixed(dp)}M`;
+  return `${sign}$${(abs * 1000).toFixed(0)}K`;
+};
+
+// ─── UI Primitives ────────────────────────────────────────────────────────────
+const Btn = ({ children, variant = 'ghost', onClick, style: s = {} }) => {
+  const base = { display:'inline-flex', alignItems:'center', gap:5, padding:'5px 11px', borderRadius:5, fontSize:12, fontWeight:500, cursor:'pointer', border:'none', whiteSpace:'nowrap' };
+  const v = {
+    ghost:   { background: C.surface,  border:`1px solid ${C.border}`,    color: C.text2 },
+    primary: { background: C.accent,   border:`1px solid ${C.accent}`,    color:'#fff'  },
+    warn:    { background: C.warn,     border:`1px solid ${C.warn}`,      color:'#fff'  },
+    link:    { background:'transparent', border:`1px solid ${C.accentBdr}`, color: C.accent },
+  };
+  return <button onClick={onClick} style={{ ...base, ...v[variant], ...s }}>{children}</button>;
+};
+
+const Badge = ({ children, col, bg, bdr }) => (
+  <span style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'3px 9px', borderRadius:4, background: bg || C.accentLt, border:`1px solid ${bdr || C.accentBdr}`, color: col || C.accent, fontSize:11, fontWeight:600 }}>
+    {children}
+  </span>
+);
+
+const SecLabel = ({ children }) => (
+  <div style={{ fontSize:10, fontWeight:700, color: C.text3, textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:10 }}>{children}</div>
+);
+
+// Financial statement table
+const FinTable = ({ rows }) => (
+  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, fontVariantNumeric:'tabular-nums' }}>
+    <tbody>
+      {rows.map((r, i) => {
+        if (r.div)  return <tr key={i}><td colSpan={3} style={{ height:10 }} /></tr>;
+        if (r.head) return <tr key={i}><td colSpan={3} style={{ padding:'2px 0 5px', fontSize:10, fontWeight:700, color: C.text3, textTransform:'uppercase', letterSpacing:'0.07em' }}>{r.label}</td></tr>;
+        if (r.tot)  return (
+          <tr key={i} style={{ borderTop:`1px solid ${C.border}`, background: r.hi ? (r.value < 0 ? C.errLt : C.accentLt) : C.surfAlt }}>
+            <td style={{ padding:'6px 0', fontWeight:600, color: r.value < 0 ? C.err : C.text1 }}>{r.label}</td>
+            <td style={{ textAlign:'right', fontWeight:700, padding:'6px 8px 6px 0', color: r.value < 0 ? C.err : C.text1 }}>{fmt(r.value)}</td>
+            <td />
+          </tr>
+        );
+        return (
+          <tr key={i} style={{ borderBottom:`1px solid ${C.border}33` }}>
+            <td style={{ padding:`5px 0 5px ${r.ind ? 14 : 0}px`, color: C.text1, lineHeight:1.3 }}>{r.label}</td>
+            <td style={{ textAlign:'right', padding:'5px 8px 5px 0', color: C.text1 }}>{fmt(r.value)}</td>
+            <td style={{ textAlign:'right', color: C.text3, fontSize:10, whiteSpace:'nowrap', paddingRight:2 }}>{r.ref}</td>
+          </tr>
+        );
+      })}
+    </tbody>
+  </table>
+);
+
+// ─── Mock Data ────────────────────────────────────────────────────────────────
+const ORGS = [
+  { ein:'13-5562394', name:'Metropolitan Museum of Art',  sector:'Arts & Culture',   state:'NY', cohort:'Major Museums' },
+  { ein:'13-2655607', name:'New York Public Library',     sector:'Arts & Culture',   state:'NY', cohort:'Major Museums' },
+  { ein:'04-2103524', name:'Harvard University',          sector:'Higher Education', state:'MA', cohort:'Research Universities' },
+  { ein:'06-0646973', name:'Yale University',             sector:'Higher Education', state:'CT', cohort:'Research Universities' },
+  { ein:'13-1837418', name:'American Red Cross',          sector:'Human Services',   state:'DC', cohort:null },
+  { ein:'94-1767919', name:'Sierra Club Foundation',      sector:'Environment',      state:'CA', cohort:null },
+];
+
+const MET_FIN = {
+  2023:{ contributions:152.3, programRevenue:187.4, investmentIncome:31.8,   otherRevenue:15.7,  totalRevenue:387.2,  programExpenses:298.4, gaExpenses:74.2, fundraisingExpenses:40.2, totalExpenses:412.8, netIncome:-25.6,  cashEquiv:234.1, stInv:412.8, ltInv:7412.3, ppe:523.4, otherAssets:357.4, totalAssets:8940.0, curLiab:187.2, ltDebt:987.2, otherLiab:55.6,  totalLiab:1230.0, unaNA:234.5, resNA:7475.5, totalNA:7710.0, uc1:141.2, uc2:167.8, uc3:198.3, ok:true  },
+  2022:{ contributions:138.7, programRevenue:168.2, investmentIncome:28.4,   otherRevenue:16.8,  totalRevenue:352.1,  programExpenses:271.4, gaExpenses:68.9, fundraisingExpenses:49.1, totalExpenses:389.4, netIncome:-37.3,  cashEquiv:198.4, stInv:387.2, ltInv:6812.4, ppe:511.2, otherAssets:310.8, totalAssets:8220.0, curLiab:162.4, ltDebt:982.1, otherLiab:55.5,  totalLiab:1200.0, unaNA:198.7, resNA:6821.3, totalNA:7020.0, uc1:118.3, uc2:148.2, uc3:172.4, ok:false },
+  2021:{ contributions:144.2, programRevenue:112.4, investmentIncome:198.3,  otherRevenue:12.1,  totalRevenue:467.0,  programExpenses:248.7, gaExpenses:62.4, fundraisingExpenses:35.8, totalExpenses:346.9, netIncome:120.1,  cashEquiv:312.4, stInv:421.8, ltInv:7124.5, ppe:498.7, otherAssets:289.6, totalAssets:8647.0, curLiab:148.2, ltDebt:978.4, otherLiab:54.4,  totalLiab:1181.0, unaNA:312.8, resNA:7153.2, totalNA:7466.0, uc1:187.2, uc2:224.6, uc3:261.1, ok:true  },
+  2020:{ contributions:98.4,  programRevenue:43.2,  investmentIncome:-287.4, otherRevenue:8.7,   totalRevenue:-137.1, programExpenses:198.4, gaExpenses:58.7, fundraisingExpenses:28.4, totalExpenses:285.5, netIncome:-422.6, cashEquiv:287.4, stInv:398.7, ltInv:5987.3, ppe:487.2, otherAssets:245.4, totalAssets:7406.0, curLiab:138.7, ltDebt:952.3, otherLiab:53.0,  totalLiab:1144.0, unaNA:187.4, resNA:6074.6, totalNA:6262.0, uc1:172.1, uc2:198.4, uc3:221.7, ok:true  },
+  2019:{ contributions:162.4, programRevenue:198.7, investmentIncome:312.4,  otherRevenue:14.5,  totalRevenue:688.0,  programExpenses:278.4, gaExpenses:71.2, fundraisingExpenses:42.4, totalExpenses:392.0, netIncome:296.0,  cashEquiv:321.4, stInv:412.8, ltInv:7412.3, ppe:478.4, otherAssets:198.1, totalAssets:8823.0, curLiab:154.7, ltDebt:962.4, otherLiab:52.9,  totalLiab:1170.0, unaNA:321.8, resNA:7331.2, totalNA:7653.0, uc1:193.2, uc2:231.8, uc3:268.4, ok:true  },
+};
+
+// Synthetic financials for other orgs
+const ALL_FIN = { '13-5562394': MET_FIN };
+ORGS.forEach(o => {
+  if (o.ein === '13-5562394') return;
+  ALL_FIN[o.ein] = {};
+  const base = 60 + ((o.ein.charCodeAt(3) * 7) % 280);
+  [2019,2020,2021,2022,2023].forEach((y, i) => {
+    const rev = base * (1 + i * 0.04) * (0.88 + Math.sin(i * 1.3) * 0.14);
+    const exp = rev * (0.92 + Math.sin(i * 0.8) * 0.06);
+    ALL_FIN[o.ein][y] = {
+      totalRevenue: rev, totalExpenses: exp, netIncome: rev - exp,
+      totalAssets: base * 14 * (1.03 ** i), totalLiab: base * 2.2, totalNA: base * 11.8 * (1.02 ** i),
+      uc1: rev * 0.38, uc2: rev * 0.48, uc3: rev * 0.58, ok: y !== 2021 || i % 3 !== 0,
+    };
+  });
+});
+
+const YEARS = [2023, 2022, 2021, 2020, 2019];
+const TABLE_ROWS = ORGS.flatMap(o => YEARS.map(y => ({ ...o, year: y, ...ALL_FIN[o.ein]?.[y] })));
+
+// ─── Left Navigation ──────────────────────────────────────────────────────────
+const NAV_ITEMS = [
+  { id:'overview',     label:'Overview',      icon:'⊞' },
+  { id:'main-data',    label:'Main Data',     icon:'⊟' },
+  { id:'institution',  label:'Institution',   icon:'⊡' },
+  { id:'viz',          label:'Visualization', icon:'⊠' },
+  { id:'cohorts',      label:'Cohorts',       icon:'◈' },
+];
+
+const LeftNav = ({ active, setActive }) => (
+  <div style={{ width:196, flexShrink:0, background: C.navBg, display:'flex', flexDirection:'column', height:'100vh', position:'fixed', left:0, top:0, zIndex:100 }}>
+    <div style={{ padding:'18px 16px 14px', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
+      <div style={{ color: C.navActiveTxt, fontWeight:700, fontSize:14, letterSpacing:'0.01em' }}>Westridge</div>
+      <div style={{ color: C.navText, fontSize:11, marginTop:2, letterSpacing:'0.05em', textTransform:'uppercase' }}>990 Research</div>
+    </div>
+    <nav style={{ flex:1, padding:'10px 8px' }}>
+      {NAV_ITEMS.map(item => (
+        <button key={item.id} onClick={() => setActive(item.id)} style={{
+          display:'flex', alignItems:'center', gap:10, width:'100%', padding:'8px 10px', borderRadius:6,
+          border:'none', background: active === item.id ? C.navActive : 'transparent',
+          color: active === item.id ? C.navActiveTxt : C.navText,
+          fontSize:13, fontWeight: active === item.id ? 500 : 400, cursor:'pointer', textAlign:'left',
+          marginBottom:2, transition:'all 0.12s',
+        }}>
+          <span style={{ opacity:0.55, fontSize:11 }}>{item.icon}</span>{item.label}
+        </button>
+      ))}
+    </nav>
+    <div style={{ padding:'12px 16px', borderTop:'1px solid rgba(255,255,255,0.07)', fontSize:11, color: C.navText, lineHeight:1.6 }}>
+      <div>IRS SOI + EO BMF</div>
+      <div style={{ opacity:0.55 }}>Last sync: Jun 1, 2026</div>
+    </div>
+  </div>
+);
+
+// ─── 1. Overview / Architecture ───────────────────────────────────────────────
+const Overview = ({ setActive, setDrill }) => (
+  <div style={{ padding:'32px 36px', maxWidth:980 }}>
+    <div style={{ fontSize:10, color: C.text3, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:6 }}>Wireframe · June 2026</div>
+    <h1 style={{ fontSize:22, fontWeight:700, marginBottom:6 }}>990 Research App</h1>
+    <p style={{ color: C.text2, fontSize:13, maxWidth:580, marginBottom:32, lineHeight:1.7 }}>
+      Internal research workstation for exploring U.S. nonprofit 990 data sourced from IRS SOI annual extracts (FY 2010–2023). Designed for institution-level analysis, peer group construction, and ThinkCell export workflows.
+    </p>
+
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:28 }}>
+      {[
+        { n:'1', id:'main-data',   title:'Main Data',           col:'#203E46', bg:'#D7E8EE', bdr:'#9DC0CC', items:['Master table — all orgs × all years','Filter: EIN, year, sector, geo, cohort','Saved filter views','Row → drill into Institution','Select rows → tag as cohort','Export to CSV / XLSX'] },
+        { n:'2', id:'institution', title:'Institution Analysis', col:'#7A5C3A', bg:'#F3EAE0', bdr:'#C4A882', items:['Institution + year selector','Simplified P&L','Simplified balance sheet','3 unrestricted cash estimates','Reconciliation checks + flags','Link to raw 990 source data'] },
+        { n:'3', id:'viz',         title:'Visualization',       col:'#5580B0', bg:'#E4EEF8', bdr:'#AECAE0', items:['A — Multi-institution trend (1–10)','B — Revenue volatility cohorts','C — Revenue growth cohorts','Click cohort → member table','Export underlying data','Metric selector'] },
+        { n:'4', id:'cohorts',     title:'Cohorts & Tags',      col:'#6B5080', bg:'#EEE8F5', bdr:'#C0A8D8', items:['Define custom peer groups','Assign tags to any institution','Reuse tags as filters everywhere','Manage / rename / delete cohorts'] },
+      ].map(s => (
+        <div key={s.n} onClick={() => setActive(s.id)} style={{ background: s.bg, border:`1.5px solid ${s.bdr}`, borderRadius:8, padding:16, cursor:'pointer', transition:'opacity 0.12s' }}
+          onMouseOver={e => e.currentTarget.style.opacity='0.85'} onMouseOut={e => e.currentTarget.style.opacity='1'}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+            <span style={{ width:20, height:20, borderRadius:4, background: s.col, color:'#fff', fontSize:11, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{s.n}</span>
+            <span style={{ fontWeight:700, fontSize:12, color: s.col }}>{s.title}</span>
+          </div>
+          <ul style={{ paddingLeft:14 }}>
+            {s.items.map(item => <li key={item} style={{ fontSize:11.5, color: C.text2, marginBottom:5, lineHeight:1.4 }}>{item}</li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+
+    <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:20, marginBottom:16 }}>
+      <SecLabel>Core Data Flow</SecLabel>
+      <div style={{ display:'flex', alignItems:'center', gap:0 }}>
+        <div style={{ flex:1.5, display:'flex', flexDirection:'column', gap:6 }}>
+          <div style={{ padding:'8px 12px', background:'#F3EAE0', border:`1px solid #C4A882`, borderRadius:5, fontSize:11, color: C.text2, lineHeight:1.5 }}>
+            <div style={{ fontWeight:600, color:'#7A5C3A', marginBottom:1 }}>IRS SOI CSVs / DATs (py12–24)</div>
+            <div style={{ color: C.text3, fontSize:10.5 }}>All financial data · FY 2010–2023</div>
+          </div>
+          <div style={{ padding:'8px 12px', background: C.accentLt, border:`1px solid ${C.accentBdr}`, borderRadius:5, fontSize:11, color: C.text2, lineHeight:1.5 }}>
+            <div style={{ fontWeight:600, color: C.accentMid, marginBottom:1 }}>IRS EO BMF (or ProPublica /search)</div>
+            <div style={{ color: C.text3, fontSize:10.5 }}>Org metadata: name · NTEE · state</div>
+          </div>
+        </div>
+        <div style={{ padding:'0 7px', color: C.text3, fontSize:16, flexShrink:0 }}>→</div>
+        <div style={{ flex:1, padding:'9px 14px', background: C.surfAlt, border:`1px solid ${C.border}`, borderRadius:5, textAlign:'center', fontSize:11, color: C.text2, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color: C.text1, marginBottom:2 }}>Join on EIN</div>
+          <div style={{ color: C.text3, fontSize:10.5 }}>Normalize · deduplicate<br/>validate TAX_PRD</div>
+        </div>
+        <div style={{ padding:'0 7px', color: C.text3, fontSize:16, flexShrink:0 }}>→</div>
+        <div style={{ flex:1, padding:'9px 14px', background: C.surfAlt, border:`1px solid ${C.border}`, borderRadius:5, textAlign:'center', fontSize:11, color: C.text2, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color: C.text1, marginBottom:2 }}>Unified DB</div>
+          <div style={{ color: C.text3, fontSize:10.5 }}>Internal store<br/>FY 2010–2023</div>
+        </div>
+        <div style={{ padding:'0 7px', color: C.text3, fontSize:16, flexShrink:0 }}>→</div>
+        <div style={{ flex:1, padding:'9px 14px', background: C.surfAlt, border:`1px solid ${C.border}`, borderRadius:5, textAlign:'center', fontSize:11, color: C.text2, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color: C.text1, marginBottom:2 }}>App Views</div>
+          <div style={{ color: C.text3, fontSize:10.5 }}>Main Data<br/>Institution · Viz</div>
+        </div>
+        <div style={{ padding:'0 7px', color: C.text3, fontSize:16, flexShrink:0 }}>→</div>
+        <div style={{ flex:1, padding:'9px 14px', background: C.surfAlt, border:`1px solid ${C.border}`, borderRadius:5, textAlign:'center', fontSize:11, color: C.text2, lineHeight:1.6 }}>
+          <div style={{ fontWeight:600, color: C.text1, marginBottom:2 }}>Export</div>
+          <div style={{ color: C.text3, fontSize:10.5 }}>ThinkCell<br/>XLSX · CSV</div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14 }}>
+      {[
+        { title:'UX Principles', warn:false, items:['Raw data always visible — every number links to a source field','Exceptions surface immediately — no silent reconciliation failures','Cohorts are first-class objects, reusable across all sections','Export is one click from any table or chart'] },
+        { title:'Design Direction', warn:false, items:['Typography: Avenir Next LT Pro (regular / medium / demi)','Dark left nav · warm off-white canvas (#F2F0EC)','Accent: forest green · Warning: amber · Error: red','Compact table density · tabular numerals · sticky headers'] },
+        { title:'⚠ Ingestion Notes (Dev)', warn:true, items:['py12–17 files are pipe-delimited (.dat); py18–24 are comma-separated (.csv) — ingestion layer must handle both','Use TAX_PRD (YYYYMM) as fiscal year — not the filename processing year','Org metadata (name, NTEE, address) not in SOI extracts — requires separate EO BMF join on EIN','ProPublica API not needed for financials — CSVs cover same fields + FY 2019–2023 which API lacks'] },
+      ].map(c => (
+        <div key={c.title} style={{ background: c.warn ? C.warnLt : C.surface, border:`1px solid ${c.warn ? C.warnBdr : C.border}`, borderRadius:8, padding:16 }}>
+          <SecLabel>{c.title}</SecLabel>
+          <ul style={{ paddingLeft:14 }}>
+            {c.items.map(item => <li key={item} style={{ fontSize:11.5, color: C.text2, marginBottom:5, lineHeight:1.4 }}>{item}</li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+// ─── 2. Main Data Table ───────────────────────────────────────────────────────
+
+// All available columns including addable ones
+const ALL_COLS = [
+  { key:'ein',          label:'EIN',              w:100,             group:'Identity' },
+  { key:'name',         label:'Organization',     w:200,             group:'Identity' },
+  { key:'year',         label:'Year',             w:54, align:'right', group:'Identity' },
+  { key:'sector',       label:'Sector',           w:128,             group:'Identity' },
+  { key:'state',        label:'State',            w:34, align:'center', group:'Identity' },
+  { key:'cohort',       label:'Cohort',           w:140,             group:'Identity' },
+  { key:'totalRevenue', label:'Revenue',          w:86, align:'right', fmt:true, group:'Income' },
+  { key:'totalExpenses',label:'Expenses',         w:86, align:'right', fmt:true, group:'Income' },
+  { key:'netIncome',    label:'Net Income',       w:80, align:'right', fmt:true, group:'Income' },
+  { key:'totalAssets',  label:'Total Assets',     w:86, align:'right', fmt:true, group:'Balance Sheet' },
+  { key:'totalNA',      label:'Net Assets',       w:86, align:'right', fmt:true, group:'Balance Sheet' },
+  { key:'totalLiab',    label:'Liabilities',      w:86, align:'right', fmt:true, group:'Balance Sheet' },
+  { key:'cashEquiv',    label:'Cash & Equiv.',    w:90, align:'right', fmt:true, group:'Balance Sheet' },
+  { key:'uc1',          label:'Unrestr. Cash M1', w:100,align:'right', fmt:true, group:'Cash Methods' },
+  { key:'uc2',          label:'Unrestr. Cash M2', w:100,align:'right', fmt:true, group:'Cash Methods' },
+  { key:'uc3',          label:'Unrestr. Cash M3', w:100,align:'right', fmt:true, group:'Cash Methods' },
+];
+const DEFAULT_COL_KEYS = new Set(['ein','name','year','sector','state','cohort','totalRevenue','totalExpenses','netIncome','totalAssets','totalNA']);
+
+
+const MainData = ({ onDrill }) => {
+  const [sortKey, setSort]     = useState('name');
+  const [sortDir, setDir]      = useState('asc');
+  const [search, setSearch]    = useState('');
+  const [chips, setChips]      = useState([{ id:'yr', label:'Year: 2019–2023' }, { id:'sec', label:'Sector: Arts, Higher Ed' }]);
+  const [sel, setSel]          = useState(new Set());
+  const [visCols, setVisCols]  = useState(new Set(DEFAULT_COL_KEYS));
+  const [showColPicker, setShowColPicker] = useState(false);
+  const COLS = ALL_COLS.filter(c => visCols.has(c.key));
+
+  const rows = TABLE_ROWS
+    .filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()) || r.ein.includes(search))
+    .sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return typeof av === 'number'
+        ? sortDir === 'asc' ? av - bv : bv - av
+        : sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
+
+  const toggleSort = k => { if (k === sortKey) setDir(d => d === 'asc' ? 'desc' : 'asc'); else { setSort(k); setDir('asc'); } };
+  const toggleRow  = k => setSel(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden' }}>
+      {/* Toolbar */}
+      <div style={{ padding:'14px 20px 0', background: C.surface, borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+          <h1 style={{ fontSize:15, fontWeight:700 }}>Main Data</h1>
+          <span style={{ color: C.text3, fontSize:12 }}>{rows.length} rows</span>
+          <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+            {sel.size > 0 && <Btn variant="primary" style={{ fontSize:11 }}>Tag {sel.size} selected →</Btn>}
+            <Btn style={{ fontSize:11 }}>Saved views ▾</Btn>
+            <div style={{ position:'relative' }}>
+              <Btn style={{ fontSize:11 }} onClick={() => setShowColPicker(p => !p)}>Columns ({visCols.size}) ▾</Btn>
+              {showColPicker && (
+                <div style={{ position:'absolute', right:0, top:'calc(100% + 6px)', zIndex:200, background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, boxShadow:'0 4px 16px rgba(0,0,0,0.10)', padding:'12px 0', minWidth:220 }}>
+                  {['Identity','Income','Balance Sheet','Cash Methods'].map(group => (
+                    <div key={group}>
+                      <div style={{ padding:'6px 14px 4px', fontSize:10, fontWeight:700, color: C.text3, textTransform:'uppercase', letterSpacing:'0.06em' }}>{group}</div>
+                      {ALL_COLS.filter(c => c.group === group).map(c => (
+                        <label key={c.key} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 14px', cursor:'pointer', fontSize:12, color: C.text1 }}
+                          onMouseOver={e => e.currentTarget.style.background=C.surfAlt} onMouseOut={e => e.currentTarget.style.background='transparent'}>
+                          <input type="checkbox" checked={visCols.has(c.key)}
+                            onChange={e => setVisCols(s => { const n = new Set(s); e.target.checked ? n.add(c.key) : n.delete(c.key); return n; })} />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                  <div style={{ padding:'8px 14px 0', borderTop:`1px solid ${C.border}`, marginTop:4 }}>
+                    <button onClick={() => setVisCols(new Set(DEFAULT_COL_KEYS))} style={{ fontSize:11, color: C.accent, background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>Reset to default</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <Btn style={{ fontSize:11 }}>Export ↓</Btn>
+          </div>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8, paddingBottom:10, flexWrap:'wrap' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or EIN…"
+            style={{ border:`1px solid ${C.border}`, borderRadius:5, padding:'5px 10px', fontSize:12, width:190, outline:'none', background: C.surfAlt }} />
+          {chips.map(c => (
+            <span key={c.id} style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'3px 8px', borderRadius:4, background: C.accentLt, border:`1px solid ${C.accentBdr}`, color: C.accent, fontSize:11, fontWeight:500 }}>
+              {c.label}
+              <button onClick={() => setChips(cs => cs.filter(x => x.id !== c.id))} style={{ background:'none', border:'none', color: C.accent, cursor:'pointer', fontSize:13, lineHeight:1, padding:0 }}>×</button>
+            </span>
+          ))}
+          <Btn style={{ fontSize:11, borderStyle:'dashed', color: C.text3 }}>+ Add Filter</Btn>
+        </div>
+      </div>
+      {/* Table */}
+      <div style={{ flex:1, overflowX:'auto', overflowY:'auto' }}>
+        <table style={{ width:'max-content', minWidth:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <thead>
+            <tr style={{ background: C.navBg, position:'sticky', top:0, zIndex:10 }}>
+              <th style={{ width:32, padding:'7px 8px 7px 14px' }}><input type="checkbox" /></th>
+              {COLS.map(c => (
+                <th key={c.key} onClick={() => toggleSort(c.key)}
+                  style={{ padding:'7px 10px', textAlign: c.align || 'left', width: c.w, color:'#9CA0A8', fontWeight:500, fontSize:10.5, letterSpacing:'0.04em', textTransform:'uppercase', cursor:'pointer', whiteSpace:'nowrap', userSelect:'none' }}>
+                  {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                </th>
+              ))}
+              <th style={{ padding:'7px 10px', color:'#9CA0A8', fontWeight:500, fontSize:10.5, letterSpacing:'0.04em', textTransform:'uppercase' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const k = `${row.ein}-${row.year}`;
+              const isSelected = sel.has(k);
+              return (
+                <tr key={k} onClick={() => toggleRow(k)}
+                  style={{ background: isSelected ? C.accentLt : (i % 2 === 0 ? C.surface : C.surfAlt), borderBottom:`1px solid ${C.border}`, cursor:'pointer', transition:'background 0.08s' }}>
+                  <td style={{ padding:'5px 8px 5px 14px' }}><input type="checkbox" checked={isSelected} onChange={() => {}} /></td>
+                  {COLS.map(c => (
+                    <td key={c.key} style={{ padding:'5px 10px', textAlign: c.align || 'left', whiteSpace:'nowrap',
+                      color: c.key === 'netIncome' && row[c.key] < 0 ? C.err : c.key === 'cohort' ? C.accent : C.text1,
+                      fontWeight: c.key === 'name' ? 500 : 400 }}>
+                      {c.fmt ? fmt(row[c.key]) : (row[c.key] ?? <span style={{ color: C.text3 }}>—</span>)}
+                    </td>
+                  ))}
+                  <td style={{ padding:'5px 10px' }}>
+                    <button onClick={e => { e.stopPropagation(); onDrill(row.ein, row.year); }}
+                      style={{ background:'none', border:`1px solid ${C.accentBdr}`, borderRadius:4, padding:'2px 8px', fontSize:11, color: C.accent, cursor:'pointer', fontFamily:'inherit' }}>
+                      Analyze →
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding:'7px 20px', borderTop:`1px solid ${C.border}`, background: C.surface, display:'flex', justifyContent:'space-between', fontSize:11, color: C.text3 }}>
+        <span>{rows.length} rows · {sel.size > 0 ? `${sel.size} selected` : 'none selected'}</span>
+        <span>ProPublica 990 · {ORGS.length} organizations · FY 2019–2023</span>
+      </div>
+    </div>
+  );
+};
+
+// ─── 3. Institution Analysis ──────────────────────────────────────────────────
+const InstAnalysis = ({ initialEin, initialYear }) => {
+  const [ein, setEin]   = useState(initialEin || '13-5562394');
+  const [year, setYear] = useState(initialYear || 2023);
+  const fin = ALL_FIN[ein]?.[year] || MET_FIN[2023];
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh' }}>
+      {/* Header */}
+      <div style={{ padding:'10px 20px', background: C.surface, borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+        <select value={ein} onChange={e => { setEin(e.target.value); setYear(2023); }}
+          style={{ border:`1px solid ${C.border}`, borderRadius:5, padding:'6px 10px', fontSize:13, fontWeight:600, background: C.surface, outline:'none', maxWidth:310 }}>
+          {ORGS.map(o => <option key={o.ein} value={o.ein}>{o.name}</option>)}
+        </select>
+        <span style={{ color: C.text3, fontSize:11 }}>EIN {ein}</span>
+        {fin.ok
+          ? <Badge col={C.accent} bg={C.accentLt} bdr={C.accentBdr}>✓ Reconciled</Badge>
+          : <Badge col={C.warn} bg={C.warnLt} bdr={C.warnBdr}>⚠ Exception — Review Required</Badge>}
+        <div style={{ marginLeft:'auto', display:'flex', gap:8 }}>
+          <Btn style={{ fontSize:11 }}>Export ↓</Btn>
+          <Btn style={{ fontSize:11 }}>Source 990 ↗</Btn>
+        </div>
+      </div>
+      <div style={{ flex:1, overflow:'auto' }}>
+        <InstitutionView ein={ein} year={year} setYear={setYear} fin={fin} />
+      </div>
+    </div>
+  );
+};
+
+// Combined layout: year strip → trend → cash methods → two-column P&L + BS
+const InstitutionView = ({ ein, year, setYear, fin }) => {
+  const data = YEARS.slice().reverse().map(y => ({ year:y, ...(ALL_FIN[ein]?.[y] || MET_FIN[2023]) }));
+  const maxVal = Math.max(...data.map(d => Math.abs(d.totalRevenue||0)), ...data.map(d => Math.abs(d.totalExpenses||0)), 1);
+  const W = 800, PL = 40, PR = 24;
+  const xPos = i => PL + (i / (data.length - 1)) * (W - PL - PR);
+  const yPos = v => 110 - (Math.abs(v || 0) / maxVal) * 92;
+
+  return (
+    <div style={{ padding:24 }}>
+
+      {/* Year strip */}
+      <div style={{ display:'flex', gap:10, marginBottom:18 }}>
+        {data.map(d => (
+          <button key={d.year} onClick={() => setYear(d.year)} style={{ padding:'10px 16px', borderRadius:6, border:`1px solid ${d.year === year ? C.accent : C.border}`, background: d.year === year ? C.accentLt : C.surface, color: d.year === year ? C.accent : C.text1, cursor:'pointer', textAlign:'left', minWidth:96, transition:'all 0.12s', fontFamily:'inherit' }}>
+            <div style={{ fontWeight:700, fontSize:13 }}>{d.year}</div>
+            <div style={{ fontSize:11, color: d.year === year ? C.accentMid : C.text3, marginTop:2 }}>{fmt(d.totalRevenue)}</div>
+            {d.ok === false && <div style={{ marginTop:5, width:6, height:6, borderRadius:'50%', background: C.warn }}></div>}
+          </button>
+        ))}
+      </div>
+
+      {/* Trend chart */}
+      <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, marginBottom:18, overflow:'hidden' }}>
+        <div style={{ padding:'11px 16px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:20 }}>
+          <span style={{ fontWeight:600, fontSize:13 }}>Revenue &amp; Expense — 5-Year Trend</span>
+          {[[C.accent,'Revenue'],[C.warn,'Expenses']].map(([col,lbl],i) => (
+            <span key={lbl} style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color: C.text2 }}>
+              <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke={col} strokeWidth="2" strokeDasharray={i ? '3,2' : 'none'} /></svg>{lbl}
+            </span>
+          ))}
+        </div>
+        <div style={{ padding:'14px 16px 18px' }}>
+          <svg width="100%" viewBox={`0 0 ${W} 130`} style={{ overflow:'visible', display:'block' }}>
+            {[0.25,0.5,0.75,1].map((p,i) => <line key={i} x1={PL} y1={yPos(maxVal*p)} x2={W-PR} y2={yPos(maxVal*p)} stroke="#E4EEF3" strokeWidth="1" />)}
+            <polyline fill="none" stroke={C.accent} strokeWidth="2" points={data.map((d,i) => `${xPos(i)},${yPos(d.totalRevenue)}`).join(' ')} />
+            <polyline fill="none" stroke={C.warn} strokeWidth="1.5" strokeDasharray="3,2" points={data.map((d,i) => `${xPos(i)},${yPos(d.totalExpenses)}`).join(' ')} />
+            {data.map((d,i) => (
+              <circle key={d.year} cx={xPos(i)} cy={yPos(d.totalRevenue)} r={d.year === year ? 5.5 : 3}
+                fill={d.year === year ? C.accent : '#fff'} stroke={C.accent} strokeWidth="1.5"
+                style={{ cursor:'pointer' }} onClick={() => setYear(d.year)} />
+            ))}
+            {data.map((d,i) => <text key={`lbl${d.year}`} x={xPos(i)} y={126} fontSize="10" fill={C.text3} textAnchor="middle">{d.year}</text>)}
+          </svg>
+        </div>
+      </div>
+
+      {/* Unrestricted cash — three methods */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:18 }}>
+        {[
+          { label:'Unrestricted Cash — Method 1', sub:'Cash × (Unrestr. NA / Total NA)',       value: fin.uc1, conf:'High',      col: C.accent },
+          { label:'Unrestricted Cash — Method 2', sub:'+ unrestricted short-term investments', value: fin.uc2, conf:'Medium',    col:'#5580B0'  },
+          { label:'Unrestricted Cash — Method 3', sub:'+ board-designated estimate',            value: fin.uc3, conf:'Estimated', col: C.warn    },
+        ].map(m => (
+          <div key={m.label} style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:7, padding:'13px 16px', display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10 }}>
+            <div>
+              <div style={{ fontWeight:600, fontSize:12, color: C.text1, marginBottom:2 }}>{m.label}</div>
+              <div style={{ fontSize:11, color: C.text3, marginBottom:10 }}>{m.sub}</div>
+              <div style={{ fontSize:24, fontWeight:800, color: m.col, letterSpacing:'-0.01em' }}>{fmt(m.value)}</div>
+            </div>
+            <div style={{ fontSize:10, fontWeight:700, color: m.col, textTransform:'uppercase', letterSpacing:'0.05em', marginTop:2, whiteSpace:'nowrap' }}>{m.conf}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Exception banner */}
+      {!fin.ok && (
+        <div style={{ marginBottom:18, background: C.warnLt, border:`1px solid ${C.warnBdr}`, borderRadius:6, padding:'10px 16px', display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontWeight:700, color: C.warn, fontSize:12, flexShrink:0 }}>⚠ Reconciliation Exception</span>
+          <span style={{ fontSize:11.5, color: C.text2, lineHeight:1.5 }}>Subaccount totals do not match reported figures. Review the full 990 and supplementary schedules before use.</span>
+          <Btn variant="warn" style={{ fontSize:11, marginLeft:'auto', flexShrink:0 }}>View Source 990 ↗</Btn>
+        </div>
+      )}
+
+      {/* Two-column: Income Statement + Balance Sheet */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:22 }}>
+          <SecLabel>Income Statement</SecLabel>
+          <FinTable rows={[
+            { head:true, label:'Revenue' },
+            { label:'Contributions & grants',  value: fin.contributions,       ref:'Pt VIII L1',  ind:true },
+            { label:'Program service revenue', value: fin.programRevenue,      ref:'Pt VIII L2',  ind:true },
+            { label:'Investment income',        value: fin.investmentIncome,    ref:'Pt VIII L3',  ind:true },
+            { label:'Other revenue',            value: fin.otherRevenue,        ref:'Pt VIII L11', ind:true },
+            { tot:true, label:'Total Revenue',  value: fin.totalRevenue },
+            { div:true },
+            { head:true, label:'Expenses' },
+            { label:'Program services',     value: fin.programExpenses,     ref:'Pt IX L25a', ind:true },
+            { label:'General & admin.',     value: fin.gaExpenses,          ref:'Pt IX L25c', ind:true },
+            { label:'Fundraising',          value: fin.fundraisingExpenses, ref:'Pt IX L25d', ind:true },
+            { tot:true, label:'Total Expenses', value: fin.totalExpenses },
+            { div:true },
+            { tot:true, hi:true, label:'Net Income / (Loss)', value: fin.netIncome },
+          ]} />
+        </div>
+        <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:22 }}>
+          <SecLabel>Balance Sheet</SecLabel>
+          <FinTable rows={[
+            { head:true, label:'Assets' },
+            { label:'Cash & equivalents',     value: fin.cashEquiv,   ref:'Pt X L1',  ind:true },
+            { label:'Short-term investments', value: fin.stInv,       ref:'Pt X L2',  ind:true },
+            { label:'Long-term investments',  value: fin.ltInv,       ref:'Pt X L5',  ind:true },
+            { label:'PP&E, net',               value: fin.ppe,         ref:'Pt X L10', ind:true },
+            { label:'Other assets',            value: fin.otherAssets, ref:'Pt X L16', ind:true },
+            { tot:true, label:'Total Assets', value: fin.totalAssets },
+            { div:true },
+            { head:true, label:'Liabilities' },
+            { label:'Current liabilities', value: fin.curLiab,   ref:'Pt X L17', ind:true },
+            { label:'Long-term debt',       value: fin.ltDebt,    ref:'Pt X L23', ind:true },
+            { label:'Other liabilities',    value: fin.otherLiab, ref:'Pt X L25', ind:true },
+            { tot:true, label:'Total Liabilities', value: fin.totalLiab },
+            { div:true },
+            { head:true, label:'Net Assets' },
+            { label:'Without donor restrictions', value: fin.unaNA, ref:'Pt X L27', ind:true },
+            { label:'With donor restrictions',    value: fin.resNA, ref:'Pt X L28', ind:true },
+            { tot:true, label:'Total Net Assets', value: fin.totalNA },
+          ]} />
+        </div>
+      </div>
+
+    </div>
+  );
+};
+
+// ─── 4. Visualization ────────────────────────────────────────────────────────
+const CHART_YEARS = [2019, 2020, 2021, 2022, 2023];
+
+// Volatility: box-and-whisker (min / Q1 / median / Q3 / max — formula TBD)
+const VOL_COHORTS = [
+  { label:'Very Stable',   n:12, cv:'CV < 5%',    col:'#203E46', min:0.3,  q1:1.2,  med:2.5,  q3:3.7,  max:4.8  },
+  { label:'Stable',        n:28, cv:'CV 5–15%',   col:'#4A8A7A', min:5.2,  q1:7.1,  med:9.6,  q3:12.4, max:14.6 },
+  { label:'Moderate',      n:34, cv:'CV 15–30%',  col:'#A78B70', min:15.4, q1:18.8, med:23.1, q3:27.2, max:29.6 },
+  { label:'Volatile',      n:18, cv:'CV 30–50%',  col:'#C45A28', min:30.8, q1:34.6, med:40.2, q3:45.1, max:49.4 },
+  { label:'Very Volatile',  n:8, cv:'CV > 50%',   col:'#B83228', min:52.1, q1:59.4, med:67.8, q3:76.3, max:85.2 },
+];
+
+// Growth: indexed lines (base 100 = 2019, median revenue per cohort)
+const GROWTH_COHORTS = [
+  { label:'Shrinking',     n:9,  cv:'CAGR < −5%', col:'#B83228', idx:[100,  91,  83,  76,  69] },
+  { label:'Declining',     n:14, cv:'−5 to 0%',   col:'#C45A28', idx:[100,  97,  94,  92,  90] },
+  { label:'Flat',          n:31, cv:'0 to 3%',    col:'#A78B70', idx:[100, 101, 102, 102, 103] },
+  { label:'Growing',       n:36, cv:'3 to 10%',   col:'#4A8A7A', idx:[100, 106, 114, 122, 130] },
+  { label:'High Growth',   n:10, cv:'CAGR > 10%', col:'#203E46', idx:[100, 115, 134, 156, 181] },
+];
+
+const BoxWhiskerChart = ({ cohorts, selected, onSelect }) => {
+  const yMin = 0, yMax = 92;
+  const CH = 190, CW = 480, PL = 42, PR = 16, PT = 10, PB = 44;
+  const iH = CH - PT - PB, iW = CW - PL - PR;
+  const yS = v => PT + iH - ((v - yMin) / (yMax - yMin)) * iH;
+  const xS = i => PL + (i + 0.5) * (iW / cohorts.length);
+  const bW = 38;
+  return (
+    <svg width="100%" viewBox={`0 0 ${CW} ${CH}`} style={{ display:'block', overflow:'visible' }}>
+      {[0,20,40,60,80].map(t => (
+        <g key={t}>
+          <line x1={PL} y1={yS(t)} x2={CW-PR} y2={yS(t)} stroke="#E4EEF3" strokeWidth="1" />
+          <text x={PL-4} y={yS(t)+3.5} fontSize="9" fill="#9A9890" textAnchor="end">{t}%</text>
+        </g>
+      ))}
+      {cohorts.map((c, i) => {
+        const x = xS(i), isSel = selected?.label === c.label;
+        const op = selected && !isSel ? 0.3 : 1;
+        return (
+          <g key={c.label} onClick={() => onSelect(isSel ? null : c)} style={{ cursor:'pointer' }} opacity={op}>
+            <line x1={x} y1={yS(c.max)} x2={x} y2={yS(c.min)} stroke={c.col} strokeWidth={isSel ? 2 : 1.5} />
+            <line x1={x-bW*0.28} y1={yS(c.max)} x2={x+bW*0.28} y2={yS(c.max)} stroke={c.col} strokeWidth={isSel ? 2 : 1.5} />
+            <line x1={x-bW*0.28} y1={yS(c.min)} x2={x+bW*0.28} y2={yS(c.min)} stroke={c.col} strokeWidth={isSel ? 2 : 1.5} />
+            <rect x={x-bW/2} y={yS(c.q3)} width={bW} height={Math.abs(yS(c.q1)-yS(c.q3))}
+              fill={c.col} fillOpacity={isSel ? 0.85 : 0.35} stroke={c.col} strokeWidth={isSel ? 2 : 1.5} rx="2" />
+            <line x1={x-bW/2} y1={yS(c.med)} x2={x+bW/2} y2={yS(c.med)} stroke={isSel ? '#fff' : c.col} strokeWidth={isSel ? 2.5 : 2} />
+            <text x={x} y={CH-PB+14} fontSize="9.5" fill={isSel ? C.text1 : C.text2} textAnchor="middle" fontWeight={isSel ? '600' : '400'}>{c.label}</text>
+            <text x={x} y={CH-PB+26} fontSize="9" fill="#9A9890" textAnchor="middle">{c.cv}</text>
+            <text x={x} y={CH-PB+38} fontSize="9" fill="#9A9890" textAnchor="middle">n={c.n}</text>
+          </g>
+        );
+      })}
+      <text x={9} y={PT+iH/2} fontSize="9" fill="#9A9890" textAnchor="middle" transform={`rotate(-90,9,${PT+iH/2})`}>Volatility measure (%)</text>
+    </svg>
+  );
+};
+
+const IndexedLineChart = ({ cohorts, selected, onSelect }) => {
+  const allVals = cohorts.flatMap(c => c.idx);
+  const yMin = Math.min(...allVals)*0.96, yMax = Math.max(...allVals)*1.04;
+  const CH = 190, CW = 480, PL = 42, PR = 16, PT = 10, PB = 36;
+  const iH = CH-PT-PB, iW = CW-PL-PR;
+  const yS = v => PT + iH - ((v-yMin)/(yMax-yMin))*iH;
+  const xS = i => PL + (i/(CHART_YEARS.length-1))*iW;
+  const ticks = [60,80,100,120,140,160,180].filter(t => t>=yMin && t<=yMax);
+  return (
+    <svg width="100%" viewBox={`0 0 ${CW} ${CH}`} style={{ display:'block', overflow:'visible' }}>
+      {ticks.map(t => (
+        <g key={t}>
+          <line x1={PL} y1={yS(t)} x2={CW-PR} y2={yS(t)} stroke={t===100 ? C.border : '#E4EEF3'} strokeWidth={t===100 ? 1.5 : 1} strokeDasharray={t===100 ? '4,3' : 'none'} />
+          <text x={PL-4} y={yS(t)+3.5} fontSize="9" fill="#9A9890" textAnchor="end">{t}</text>
+        </g>
+      ))}
+      {cohorts.map(c => {
+        const isSel = selected?.label === c.label;
+        const pts = c.idx.map((v,i) => `${xS(i)},${yS(v)}`).join(' ');
+        return (
+          <g key={c.label} onClick={() => onSelect(isSel ? null : c)} style={{ cursor:'pointer' }}>
+            <polyline fill="none" stroke={c.col} strokeWidth={isSel ? 2.5 : 1.5} strokeOpacity={selected && !isSel ? 0.2 : 1} points={pts} />
+            {c.idx.map((v,i) => (
+              <circle key={i} cx={xS(i)} cy={yS(v)} r={isSel ? 4 : 2.5}
+                fill={isSel ? c.col : '#fff'} stroke={c.col}
+                strokeWidth={isSel ? 0 : 1.5}
+                strokeOpacity={selected && !isSel ? 0.2 : 1}
+                fillOpacity={selected && !isSel ? 0.2 : 1} />
+            ))}
+          </g>
+        );
+      })}
+      {CHART_YEARS.map((y,i) => (
+        <text key={y} x={xS(i)} y={CH-PB+14} fontSize="10" fill="#9A9890" textAnchor="middle">{y}</text>
+      ))}
+      <text x={9} y={PT+iH/2} fontSize="9" fill="#9A9890" textAnchor="middle" transform={`rotate(-90,9,${PT+iH/2})`}>Indexed (2019 = 100)</text>
+    </svg>
+  );
+};
+
+const CohortMemberPanel = ({ cohort, view }) => (
+  <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden' }}>
+    <div style={{ padding:'12px 16px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+      <div>
+        <div style={{ fontWeight:700, fontSize:13 }}>{cohort ? `${cohort.label} — Members` : 'Select a cohort'}</div>
+        {cohort && <div style={{ fontSize:11, color: C.text3, marginTop:1 }}>{cohort.n} organizations · {cohort.cv}</div>}
+      </div>
+      {cohort && <Btn style={{ fontSize:11 }}>Export ↓</Btn>}
+    </div>
+    <div style={{ minHeight:180, maxHeight:300, overflowY:'auto' }}>
+      {!cohort
+        ? <div style={{ padding:'48px 20px', color: C.text3, fontSize:12, textAlign:'center' }}>← Click a cohort to view member organizations</div>
+        : <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead><tr style={{ background: C.surfAlt }}>
+              <th style={{ padding:'7px 14px', textAlign:'left', fontWeight:500, color: C.text2, borderBottom:`1px solid ${C.border}`, fontSize:11 }}>Organization</th>
+              <th style={{ padding:'7px 14px', textAlign:'right', fontWeight:500, color: C.text2, borderBottom:`1px solid ${C.border}`, fontSize:11 }}>{view === 'vol' ? 'CV' : 'CAGR'}</th>
+              <th style={{ padding:'7px 14px', textAlign:'right', fontWeight:500, color: C.text2, borderBottom:`1px solid ${C.border}`, fontSize:11 }}>Revenue 2023</th>
+            </tr></thead>
+            <tbody>
+              {ORGS.slice(0,4).map((o,i) => (
+                <tr key={o.ein} style={{ borderBottom:`1px solid ${C.border}` }}>
+                  <td style={{ padding:'8px 14px' }}>
+                    <div style={{ fontWeight:500 }}>{o.name}</div>
+                    <div style={{ fontSize:10, color: C.text3 }}>{o.ein}</div>
+                  </td>
+                  <td style={{ padding:'8px 14px', textAlign:'right', color: cohort.col, fontWeight:700 }}>{view === 'vol' ? `${(5+i*3.8).toFixed(1)}%` : `${(1.8+i*2.4).toFixed(1)}%`}</td>
+                  <td style={{ padding:'8px 14px', textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{fmt(ALL_FIN[o.ein]?.[2023]?.totalRevenue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+      }
+    </div>
+  </div>
+);
+
+const Visualization = () => {
+  const [view, setView]         = useState('trend');
+  const [cohort, setCohort]     = useState(null);
+  const [selOrgs, setSelOrgs]   = useState(['13-5562394','04-2103524','06-0646973']);
+  const [metric, setMetric]     = useState('totalRevenue');
+  const [periodStart, setPeriodStart] = useState(2019);
+  const [periodEnd,   setPeriodEnd]   = useState(2023);
+  const ALL_YEARS = [2014,2015,2016,2017,2018,2019,2020,2021,2022,2023];
+  const activePeriod = ALL_YEARS.filter(y => y >= periodStart && y <= periodEnd);
+  const W = 620, PL = 36, PR = 20;
+  const xPos = i => PL + (i/(activePeriod.length-1))*(W-PL-PR);
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100vh' }}>
+      {/* Tab bar */}
+      <div style={{ padding:'12px 20px', background: C.surface, borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:10 }}>
+        <h1 style={{ fontSize:15, fontWeight:700, marginRight:6 }}>Visualization</h1>
+        {[{id:'trend',l:'A — Trend'},{id:'vol',l:'B — Volatility'},{id:'growth',l:'C — Growth'}].map(v => (
+          <button key={v.id} onClick={() => { setView(v.id); setCohort(null); }}
+            style={{ padding:'5px 14px', borderRadius:4, border:`1px solid ${view===v.id ? C.accent : C.border}`, background: view===v.id ? C.accentLt : 'transparent', color: view===v.id ? C.accent : C.text2, fontSize:12, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>{v.l}</button>
+        ))}
+        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:11, color: C.text3 }}>Period:</span>
+          <select value={periodStart} onChange={e => setPeriodStart(+e.target.value)}
+            style={{ border:`1px solid ${C.border}`, borderRadius:4, padding:'4px 8px', fontSize:11, outline:'none', background: C.surface, fontFamily:'inherit' }}>
+            {ALL_YEARS.filter(y => y < periodEnd).map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <span style={{ fontSize:11, color: C.text3 }}>→</span>
+          <select value={periodEnd} onChange={e => setPeriodEnd(+e.target.value)}
+            style={{ border:`1px solid ${C.border}`, borderRadius:4, padding:'4px 8px', fontSize:11, outline:'none', background: C.surface, fontFamily:'inherit' }}>
+            {ALL_YEARS.filter(y => y > periodStart).map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <Btn style={{ fontSize:11 }}>Export ↓</Btn>
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflow:'auto', padding:20 }}>
+
+        {/* ── A: Multi-institution trend ── */}
+        {view === 'trend' && (
+          <div style={{ display:'flex', gap:16, alignItems:'flex-start' }}>
+            <div style={{ width:204, background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:14, flexShrink:0 }}>
+              <SecLabel>Institutions (max 10)</SecLabel>
+              {ORGS.map(o => (
+                <label key={o.ein} style={{ display:'flex', alignItems:'flex-start', gap:8, marginBottom:7, cursor:'pointer', fontSize:12 }}>
+                  <input type="checkbox" checked={selOrgs.includes(o.ein)} style={{ marginTop:2, flexShrink:0 }}
+                    onChange={e => e.target.checked ? setSelOrgs(s => [...s, o.ein].slice(0,10)) : setSelOrgs(s => s.filter(x => x !== o.ein))} />
+                  <span style={{ color: C.text1, lineHeight:1.35 }}>{o.name}</span>
+                </label>
+              ))}
+              <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${C.border}` }}>
+                <SecLabel>Metric</SecLabel>
+                <select value={metric} onChange={e => setMetric(e.target.value)} style={{ width:'100%', border:`1px solid ${C.border}`, borderRadius:4, padding:'5px 8px', fontSize:11, outline:'none', background: C.surface, fontFamily:'inherit' }}>
+                  {[['totalRevenue','Total Revenue'],['totalExpenses','Total Expenses'],['netIncome','Net Income'],['uc1','Unrestr. Cash — M1'],['uc2','Unrestr. Cash — M2'],['uc3','Unrestr. Cash — M3']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ flex:1, background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden' }}>
+              <div style={{ padding:'11px 16px', borderBottom:`1px solid ${C.border}`, display:'flex', gap:16, flexWrap:'wrap', alignItems:'center' }}>
+                {selOrgs.map((ein, idx) => {
+                  const o = ORGS.find(x => x.ein === ein);
+                  return <span key={ein} style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color: C.text2 }}>
+                    <svg width="18" height="6"><line x1="0" y1="3" x2="18" y2="3" stroke={C.chart[idx % C.chart.length]} strokeWidth="2.5" /></svg>
+                    {o?.name.split(' ').slice(0,3).join(' ')}
+                  </span>;
+                })}
+              </div>
+              <div style={{ padding:'16px 20px 20px' }}>
+                <svg width="100%" viewBox={`0 0 ${W} 180`} style={{ overflow:'visible', display:'block' }}>
+                  {[0.25,0.5,0.75,1].map((p,i) => <line key={i} x1={PL} y1={20+p*140} x2={W-PR} y2={20+p*140} stroke="#EDEAE6" strokeWidth="1" />)}
+                  {selOrgs.map((ein, idx) => {
+                    const vals = CHART_YEARS.map(y => ALL_FIN[ein]?.[y]?.[metric] || 0);
+                    const mx = Math.max(...vals.map(Math.abs), 1);
+                    const col = C.chart[idx % C.chart.length];
+                    return (
+                      <g key={ein}>
+                        <polyline fill="none" stroke={col} strokeWidth="1.5" points={vals.map((v,i) => `${xPos(i)},${155-(Math.abs(v)/mx)*130}`).join(' ')} />
+                        {vals.map((v,i) => <circle key={i} cx={xPos(i)} cy={155-(Math.abs(v)/mx)*130} r="3" fill={col} />)}
+                      </g>
+                    );
+                  })}
+                  {CHART_YEARS.map((y,i) => <text key={y} x={xPos(i)} y={173} fontSize="10" fill={C.text3} textAnchor="middle">{y}</text>)}
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── B: Volatility (box-and-whisker) ── */}
+        {view === 'vol' && (
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, alignItems:'start' }}>
+            <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden' }}>
+              <div style={{ padding:'12px 16px', borderBottom:`1px solid ${C.border}` }}>
+                <div style={{ fontWeight:700, fontSize:13 }}>Revenue Volatility Distribution</div>
+                <div style={{ fontSize:11, color: C.text3, marginTop:2 }}>{periodStart}–{periodEnd} window · formula TBD · click a box to view members</div>
+              </div>
+              <div style={{ padding:'16px 20px 20px' }}>
+                <BoxWhiskerChart cohorts={VOL_COHORTS} selected={cohort} onSelect={setCohort} period={activePeriod} />
+              </div>
+            </div>
+            <CohortMemberPanel cohort={cohort} view="vol" />
+          </div>
+        )}
+
+        {/* ── C: Growth (indexed line chart) ── */}
+        {view === 'growth' && (
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, alignItems:'start' }}>
+            <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden' }}>
+              <div style={{ padding:'12px 16px', borderBottom:`1px solid ${C.border}` }}>
+                <div style={{ fontWeight:700, fontSize:13 }}>Revenue Growth Cohorts</div>
+                <div style={{ fontSize:11, color: C.text3, marginTop:2 }}>Indexed to 100 at start of period ({periodStart}) · click a line to view members</div>
+              </div>
+              <div style={{ padding:'16px 20px 12px' }}>
+                <IndexedLineChart cohorts={GROWTH_COHORTS} selected={cohort} onSelect={setCohort} period={activePeriod} />
+              </div>
+              <div style={{ padding:'0 20px 16px', display:'flex', gap:14, flexWrap:'wrap' }}>
+                {GROWTH_COHORTS.map(c => (
+                  <span key={c.label} onClick={() => setCohort(cohort?.label === c.label ? null : c)}
+                    style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, cursor:'pointer', opacity: cohort && cohort.label !== c.label ? 0.35 : 1, fontWeight: cohort?.label === c.label ? 600 : 400, color: C.text2 }}>
+                    <svg width="16" height="8"><line x1="0" y1="4" x2="16" y2="4" stroke={c.col} strokeWidth="2.5" /></svg>
+                    {c.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <CohortMemberPanel cohort={cohort} view="growth" />
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+};
+
+
+// ─── 5. Cohorts ───────────────────────────────────────────────────────────────
+const Cohorts = () => {
+  const [cohorts] = useState([
+    { name:'Major Museums',        col:'#2B5838', members:['13-5562394','13-2655607'] },
+    { name:'Research Universities', col:'#3D5F8A', members:['04-2103524','06-0646973'] },
+  ]);
+  const [active, setActive] = useState(0);
+  const coh = cohorts[active];
+
+  return (
+    <div style={{ display:'flex', height:'100vh' }}>
+      <div style={{ width:200, borderRight:`1px solid ${C.border}`, background: C.surface, flexShrink:0, display:'flex', flexDirection:'column' }}>
+        <div style={{ padding:14, borderBottom:`1px solid ${C.border}` }}>
+          <div style={{ fontWeight:700, fontSize:14, marginBottom:10 }}>Cohorts</div>
+          <Btn variant="primary" style={{ width:'100%', justifyContent:'center', fontSize:12 }}>+ New Cohort</Btn>
+        </div>
+        <div style={{ flex:1, overflowY:'auto', padding:8 }}>
+          {cohorts.map((c, i) => (
+            <div key={c.name} onClick={() => setActive(i)} style={{ padding:'10px 12px', borderRadius:6, cursor:'pointer', marginBottom:4, background: active === i ? C.accentLt : 'transparent', border:`1px solid ${active === i ? C.accentBdr : 'transparent'}` }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ width:8, height:8, borderRadius:'50%', background: c.col, flexShrink:0 }}></span>
+                <span style={{ fontWeight:500, fontSize:12 }}>{c.name}</span>
+              </div>
+              <div style={{ fontSize:11, color: C.text3, marginTop:2, paddingLeft:16 }}>{c.members.length} members</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex:1, display:'flex', flexDirection:'column' }}>
+        <div style={{ padding:'14px 20px', borderBottom:`1px solid ${C.border}`, background: C.surface, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <div>
+            <h1 style={{ fontSize:15, fontWeight:700 }}>{coh.name}</h1>
+            <p style={{ fontSize:12, color: C.text3, marginTop:2 }}>{coh.members.length} organizations</p>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <Btn style={{ fontSize:11 }}>Rename</Btn>
+            <Btn style={{ fontSize:11 }}>Export ↓</Btn>
+            <Btn style={{ fontSize:11 }}>View in Main Data →</Btn>
+          </div>
+        </div>
+        <div style={{ flex:1, overflow:'auto', padding:20 }}>
+          <div style={{ background: C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:'hidden', marginBottom:14 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead><tr style={{ background: C.surfAlt }}>
+                {['Organization','EIN','Sector','Revenue (2023)','Net Assets (2023)',''].map(h => (
+                  <th key={h} style={{ padding:'8px 14px', textAlign: h.includes('Revenue') || h.includes('Assets') ? 'right' : 'left', fontWeight:500, color: C.text2, borderBottom:`1px solid ${C.border}`, fontSize:11 }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {coh.members.map(ein => {
+                  const o = ORGS.find(x => x.ein === ein);
+                  const f = ALL_FIN[ein]?.[2023] || MET_FIN[2023];
+                  return (
+                    <tr key={ein} style={{ borderBottom:`1px solid ${C.border}` }}>
+                      <td style={{ padding:'9px 14px', fontWeight:500 }}>{o?.name}</td>
+                      <td style={{ padding:'9px 14px', color: C.text2, fontSize:11 }}>{ein}</td>
+                      <td style={{ padding:'9px 14px', color: C.text2 }}>{o?.sector}</td>
+                      <td style={{ padding:'9px 14px', textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{fmt(f?.totalRevenue)}</td>
+                      <td style={{ padding:'9px 14px', textAlign:'right', fontVariantNumeric:'tabular-nums' }}>{fmt(f?.totalNA)}</td>
+                      <td style={{ padding:'9px 14px' }}><button style={{ background:'none', border:'none', color: C.err, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>Remove</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ background: C.surfAlt, border:`1px dashed ${C.border}`, borderRadius:8, padding:20, textAlign:'center', color: C.text3, fontSize:12, lineHeight:1.7 }}>
+            + Add institutions — select rows in Main Data and click "Tag Selected",<br />or drag EINs here
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── App Shell ────────────────────────────────────────────────────────────────
+const App = () => {
+  const [section, setSection] = useState('overview');
+  const [drillEin, setDrillEin]   = useState(null);
+  const [drillYear, setDrillYear] = useState(null);
+
+  const drillIn = (ein, year) => { setDrillEin(ein); setDrillYear(year); setSection('institution'); };
+
+  return (
+    <div style={{ display:'flex', minHeight:'100vh', overflow:'hidden' }}>
+      <LeftNav active={section} setActive={setSection} />
+      <div style={{ marginLeft:196, width:'calc(100vw - 196px)', minHeight:'100vh', background: section === 'overview' ? C.bg : C.surface, overflow:'hidden' }}>
+        {section === 'overview'    && <Overview setActive={setSection} setDrill={drillIn} />}
+        {section === 'main-data'   && <MainData onDrill={drillIn} />}
+        {section === 'institution' && <InstAnalysis key={drillEin || 'default'} initialEin={drillEin} initialYear={drillYear} />}
+        {section === 'viz'         && <Visualization />}
+        {section === 'cohorts'     && <Cohorts />}
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #F2F4F1;
+  --color-surface: #FFFFFF;
+  --color-nav: #203E46;
+  --color-nav-text: #7AAEBB;
+  --color-nav-active: #F2F4F1;
+  --color-text-primary: #10232B;
+  --color-text-secondary: #3D5A63;
+  --color-text-tertiary: #7A9AA4;
+  --color-accent: #6F99CC;
+  --color-accent-mid: #5580B0;
+  --color-accent-light: #E4EEF8;
+  --color-accent-border: #AECAE0;
+  --color-warning: #7A5C3A;
+  --color-warning-light: #F3EAE0;
+  --color-warning-border: #C4A882;
+  --color-error: #B83228;
+  --color-error-light: #FAEBE9;
+  --color-section-header: #D7E8EE;
+  --color-border: #BDD3DC;
+
+  --font-family-sans: 'Avenir Next LT Pro', system-ui, sans-serif;
+
+  --font-size-table: 12px;
+  --font-size-body: 13px;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-body);
+    color: var(--color-text-primary);
+    background-color: var(--color-canvas);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Scrollbar styles */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-text-tertiary);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+}
