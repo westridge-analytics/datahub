@@ -30,11 +30,12 @@ export default function RootLayout({
           style={{
             marginLeft: '220px',
             flex: 1,
-            minHeight: '100vh',
+            height: '100vh',
             display: 'flex',
             flexDirection: 'column',
             backgroundColor: '#F2F4F1',
-            overflow: 'auto',
+            overflow: 'hidden',
+            minWidth: 0,
           }}
         >
           {children}

@@ -337,7 +337,7 @@ export default function MainDataTable() {
   const orderedVisible = columnOrder.filter((c) => visibleColumns.includes(c))
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#F2F4F1' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, backgroundColor: '#F2F4F1' }}>
       {/* ── Toolbar ── */}
       <div
         style={{
