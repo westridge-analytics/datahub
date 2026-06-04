@@ -591,8 +591,8 @@ export default function MainDataTable() {
         )}
         <table
           style={{
-            width: '100%',
-            minWidth: '800px',
+            width: 'max-content',
+            minWidth: '100%',
             borderCollapse: 'collapse',
             fontSize: '13px',
             color: '#10232B',
