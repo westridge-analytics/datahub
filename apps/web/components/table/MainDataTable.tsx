@@ -571,7 +571,7 @@ export default function MainDataTable() {
       </div>
 
       {/* ── Table ── */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', minWidth: 0, minHeight: 0 }}>
         {loading && (
           <div style={{
             position: 'fixed',
@@ -592,6 +592,7 @@ export default function MainDataTable() {
         <table
           style={{
             width: '100%',
+            minWidth: '800px',
             borderCollapse: 'collapse',
             fontSize: '13px',
             color: '#10232B',
