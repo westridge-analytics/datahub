@@ -7,7 +7,14 @@ Income division, normalises financial fields, and upserts into a Postgres
 database (Neon / Vercel Postgres).
 
 Usage:
-    python ingest.py [--data-dir PATH] [--eobmf PATH] [--dry-run]
+    python ingest.py [--data-dir PATH] [--eobmf PATH] [--dry-run] [--files FILE ...]
+
+Examples:
+    # Load only the 4 most recent files
+    python ingest.py --files 21eoextract990.csv 22eoextract990.csv 23eoextract990.csv 24eoextract990.csv
+
+    # Load all files (no --files flag = discover everything in --data-dir)
+    python ingest.py
 """
 
 from __future__ import annotations
@@ -27,9 +34,7 @@ from dotenv import load_dotenv
 # Constants
 # ---------------------------------------------------------------------------
 
-# Space-delimited files (py12–py14, 15eo–17eo) — all rows are Form 990.
-# Note: 15eo–17eo have an `elf` column but we still include all rows because
-# the IRS extract for these years contains only Form 990 filers.
+# Space-delimited 990 files (py12–py14, 15eo–17eo)
 SPACE_DELIM_PATTERNS = {
     "py12_990.dat",
     "py13_990.dat",
@@ -39,8 +44,23 @@ SPACE_DELIM_PATTERNS = {
     "17eofinextract990.dat",
 }
 
+# Space-delimited 990-EZ files
+SPACE_DELIM_EZ_PATTERNS = {
+    "py12_990ez.dat",
+    "py13_EZ.dat",
+    "py14_EZ.dat",
+    "15eofinextractEZ.dat",
+    "16eofinextractez.dat",
+    "17eofinextractEZ.dat",
+}
+
 # CSV files (18eo–24eo) — filter to elf == 'E' for full Form 990.
 CSV_PATTERNS_PREFIX = "eoextract990.csv"  # filenames like 18eoextract990.csv
+
+# CSV 990-EZ files — filenames like 18eoextractez.csv or 24eoextract990EZ.csv
+def is_ez_csv(filename: str) -> bool:
+    f = filename.lower()
+    return f.endswith(".csv") and ("ez" in f) and f[:2].isdigit()
 
 NTEE_SECTOR_MAP = {
     "A": "Arts, Culture & Humanities",
@@ -309,6 +329,89 @@ def normalise_csv(row: dict, source_file: str) -> dict | None:
     }
 
 
+def _ez_record(
+    ein: str,
+    tax_period: str,
+    fiscal_year: int,
+    row: dict,
+    source_file: str,
+) -> dict:
+    """Build a normalised filing dict from 990-EZ fields."""
+    total_revenue    = parse_int(row.get("totrevnue"))
+    total_expenses   = parse_int(row.get("totexpns"))
+    total_assets     = parse_int(row.get("totassetsend"))
+    total_liabilities = parse_int(row.get("totliabend"))
+    total_net_assets = parse_int(row.get("totnetassetsend") or row.get("networthend"))
+    contributions    = parse_int(row.get("totcntrbs"))
+    program_revenue  = parse_int(row.get("prgmservrev"))
+    investment_income = parse_int(row.get("othrinvstinc"))
+    other_revenue    = derive_other_revenue(total_revenue, contributions, program_revenue, investment_income)
+
+    return {
+        "ein": ein,
+        "tax_period": tax_period,
+        "fiscal_year": fiscal_year,
+        "total_revenue": total_revenue,
+        "total_expenses": total_expenses,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_net_assets": total_net_assets,
+        "contributions": contributions,
+        "program_revenue": program_revenue,
+        "investment_income": investment_income,
+        "other_revenue": other_revenue,
+        # EZ doesn't have expense breakdowns or detailed balance sheet items
+        "program_expenses": None,
+        "ga_expenses": None,
+        "fundraising_expenses": None,
+        "cash_equiv": None,
+        "st_investments": None,
+        "lt_investments": None,
+        "ppe": None,
+        "unrestr_net_assets": None,
+        "restr_net_assets": None,
+        "source_file": source_file,
+        "form_type": "990EZ",
+    }
+
+
+def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
+    """Normalise a row from a space-delimited 990-EZ file."""
+    elf = row.get("elf", "").strip().upper()
+    if elf in ("P",):
+        return None
+
+    ein = fmt_ein(row.get("ein", ""))
+    if ein is None:
+        return None
+
+    # py12–14 use a_tax_prd; 15eo–17eo use a_tax_prd or tax_prd
+    tax_period_raw = row.get("a_tax_prd") or row.get("tax_prd") or row.get("tax_pd") or ""
+    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
+    if tax_period is None:
+        return None
+
+    return _ez_record(ein, tax_period, fiscal_year, row, source_file)
+
+
+def normalise_ez_csv(row: dict, source_file: str) -> dict | None:
+    """Normalise a row from a CSV 990-EZ file."""
+    elf = (row.get("efile") or row.get("elf") or "").strip().upper()
+    if elf != "E":
+        return None
+
+    ein = fmt_ein(row.get("ein", ""))
+    if ein is None:
+        return None
+
+    tax_period_raw = row.get("taxpd") or row.get("tax_pd") or ""
+    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
+    if tax_period is None:
+        return None
+
+    return _ez_record(ein, tax_period, fiscal_year, row, source_file)
+
+
 # ---------------------------------------------------------------------------
 # File reading
 # ---------------------------------------------------------------------------
@@ -316,6 +419,10 @@ def normalise_csv(row: dict, source_file: str) -> dict | None:
 
 def is_space_delimited(filename: str) -> bool:
     return filename in SPACE_DELIM_PATTERNS
+
+
+def is_space_delimited_ez(filename: str) -> bool:
+    return filename in SPACE_DELIM_EZ_PATTERNS
 
 
 def _normalise_row(row: dict) -> dict:
@@ -354,15 +461,8 @@ INSERT INTO filings (
     contributions, program_revenue, investment_income, other_revenue,
     program_expenses, ga_expenses, fundraising_expenses,
     cash_equiv, st_investments, lt_investments, ppe,
-    unrestr_net_assets, restr_net_assets, source_file
-) VALUES (
-    %(ein)s, %(tax_period)s, %(fiscal_year)s,
-    %(total_revenue)s, %(total_expenses)s, %(total_assets)s, %(total_liabilities)s, %(total_net_assets)s,
-    %(contributions)s, %(program_revenue)s, %(investment_income)s, %(other_revenue)s,
-    %(program_expenses)s, %(ga_expenses)s, %(fundraising_expenses)s,
-    %(cash_equiv)s, %(st_investments)s, %(lt_investments)s, %(ppe)s,
-    %(unrestr_net_assets)s, %(restr_net_assets)s, %(source_file)s
-)
+    unrestr_net_assets, restr_net_assets, source_file, form_type
+) VALUES %s
 ON CONFLICT (ein, tax_period) DO UPDATE SET
     fiscal_year          = EXCLUDED.fiscal_year,
     total_revenue        = EXCLUDED.total_revenue,
@@ -383,7 +483,8 @@ ON CONFLICT (ein, tax_period) DO UPDATE SET
     ppe                  = EXCLUDED.ppe,
     unrestr_net_assets   = EXCLUDED.unrestr_net_assets,
     restr_net_assets     = EXCLUDED.restr_net_assets,
-    source_file          = EXCLUDED.source_file
+    source_file          = EXCLUDED.source_file,
+    form_type            = EXCLUDED.form_type
 """
 
 
@@ -394,7 +495,7 @@ def upsert_filings(conn, records: list[dict], dry_run: bool) -> int:
     if dry_run:
         return len(records)
     with conn.cursor() as cur:
-        psycopg2.extras.execute_many(cur, UPSERT_FILING_SQL, records)
+        cur.executemany(UPSERT_FILING_SQL, records)
     conn.commit()
     return len(records)
 
@@ -405,7 +506,7 @@ def upsert_filings(conn, records: list[dict], dry_run: bool) -> int:
 
 UPSERT_ORG_SQL = """
 INSERT INTO organizations (ein, name, state, ntee_code, sector, subseccd)
-VALUES (%(ein)s, %(name)s, %(state)s, %(ntee_code)s, %(sector)s, %(subseccd)s)
+VALUES %s
 ON CONFLICT (ein) DO UPDATE SET
     name      = EXCLUDED.name,
     state     = EXCLUDED.state,
@@ -422,7 +523,7 @@ def decode_sector(ntee_code: str | None) -> str:
     return NTEE_SECTOR_MAP.get(first, "Unknown")
 
 
-def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False) -> None:
+def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url: str | None = None) -> None:
     """
     Read the IRS EO BMF CSV file and upsert into the organizations table.
 
@@ -477,12 +578,27 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False) -> None:
 
     batch_size = 5000
     total_upserted = 0
-    with conn.cursor() as cur:
-        for i in range(0, len(records), batch_size):
-            batch = records[i : i + batch_size]
-            psycopg2.extras.execute_many(cur, UPSERT_ORG_SQL, batch)
+    i = 0
+    while i < len(records):
+        batch = records[i : i + batch_size]
+        row_tuples = [(r["ein"], r["name"], r["state"], r["ntee_code"], r["sector"], r["subseccd"]) for r in batch]
+        try:
+            with conn.cursor() as cur:
+                psycopg2.extras.execute_values(cur, UPSERT_ORG_SQL, row_tuples, page_size=batch_size)
             conn.commit()
             total_upserted += len(batch)
+            i += len(batch)
+            print(f"[EO BMF] {total_upserted}/{len(records)} upserted ...", flush=True)
+        except psycopg2.OperationalError as e:
+            print(f"[EO BMF] Connection error at {total_upserted}: {e} — reconnecting ...", flush=True)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if database_url:
+                conn = psycopg2.connect(database_url)
+            else:
+                raise
 
     print(f"[EO BMF] Upserted {total_upserted} organizations")
 
@@ -492,13 +608,15 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 
-def ingest_file(filepath: Path, conn, dry_run: bool) -> None:
+def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = None) -> None:
     filename = filepath.name
     print(f"\n[{filename}] Reading ...", flush=True)
 
-    space_delim = is_space_delimited(filename)
+    space_delim    = is_space_delimited(filename)
+    space_delim_ez = is_space_delimited_ez(filename)
+    ez_csv         = is_ez_csv(filename)
 
-    if space_delim:
+    if space_delim or space_delim_ez:
         raw_rows = read_space_delimited(filepath)
     else:
         raw_rows = read_csv(filepath)
@@ -509,12 +627,15 @@ def ingest_file(filepath: Path, conn, dry_run: bool) -> None:
     skipped = 0
 
     # Deduplication within this file: last row for (ein, tax_period) wins.
-    # We use a dict keyed by (ein, tax_period).
     dedup: dict[tuple, dict] = {}
 
     for raw in raw_rows:
         if space_delim:
             rec = normalise_space_delimited(raw, filename)
+        elif space_delim_ez:
+            rec = normalise_ez_space_delimited(raw, filename)
+        elif ez_csv:
+            rec = normalise_ez_csv(raw, filename)
         else:
             rec = normalise_csv(raw, filename)
 
@@ -544,12 +665,40 @@ def ingest_file(filepath: Path, conn, dry_run: bool) -> None:
         print(f"[{filename}] DRY RUN — would upsert {len(records)} records")
         return
 
-    with conn.cursor() as cur:
-        for i in range(0, len(records), batch_size):
-            batch = records[i : i + batch_size]
-            psycopg2.extras.execute_many(cur, UPSERT_FILING_SQL, batch)
+    FILING_COLS = [
+        "ein", "tax_period", "fiscal_year",
+        "total_revenue", "total_expenses", "total_assets", "total_liabilities", "total_net_assets",
+        "contributions", "program_revenue", "investment_income", "other_revenue",
+        "program_expenses", "ga_expenses", "fundraising_expenses",
+        "cash_equiv", "st_investments", "lt_investments", "ppe",
+        "unrestr_net_assets", "restr_net_assets", "source_file", "form_type",
+    ]
+
+    # Back-fill form_type for records that don't have it (990 normalizer)
+    for r in records:
+        r.setdefault("form_type", "990")
+
+    i = 0
+    while i < len(records):
+        batch = records[i : i + batch_size]
+        row_tuples = [tuple(r[c] for c in FILING_COLS) for r in batch]
+        try:
+            with conn.cursor() as cur:
+                psycopg2.extras.execute_values(cur, UPSERT_FILING_SQL, row_tuples, page_size=batch_size)
             conn.commit()
             total_upserted += len(batch)
+            i += len(batch)
+            print(f"[{filename}] {total_upserted}/{len(records)} upserted ...", flush=True)
+        except psycopg2.OperationalError as e:
+            print(f"[{filename}] Connection error at {total_upserted}: {e} — reconnecting ...", flush=True)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if database_url:
+                conn = psycopg2.connect(database_url)
+            else:
+                raise
 
     print(f"[{filename}] Upserted {total_upserted} records", flush=True)
 
@@ -575,13 +724,15 @@ def _file_sort_key(f: Path) -> int:
 
 
 def discover_files(data_dir: Path) -> list[Path]:
-    """Return all recognised 990 source files sorted oldest-to-newest."""
+    """Return all recognised 990 and 990-EZ source files sorted oldest-to-newest."""
     result = []
     for f in data_dir.iterdir():
         name = f.name
-        if name in SPACE_DELIM_PATTERNS:
+        if name in SPACE_DELIM_PATTERNS or name in SPACE_DELIM_EZ_PATTERNS:
             result.append(f)
         elif name.endswith(CSV_PATTERNS_PREFIX) and name[:2].isdigit():
+            result.append(f)
+        elif is_ez_csv(name):
             result.append(f)
     return sorted(result, key=_file_sort_key)
 
@@ -604,6 +755,16 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Parse files and report counts without writing to the database",
+    )
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        metavar="FILE",
+        default=None,
+        help=(
+            "Explicit filenames to ingest (e.g. 21eoextract990.csv 22eoextract990.csv). "
+            "Omit to process all recognised files in --data-dir."
+        ),
     )
     args = parser.parse_args()
 
@@ -635,9 +796,20 @@ def main() -> None:
         if not eobmf_path.is_file():
             print(f"ERROR: EO BMF file not found: {eobmf_path}", file=sys.stderr)
             sys.exit(1)
-        ingest_eobmf(eobmf_path, conn, dry_run=args.dry_run)
+        ingest_eobmf(eobmf_path, conn, dry_run=args.dry_run, database_url=database_url)
 
-    files = discover_files(data_dir)
+    if args.files:
+        # Explicit list: resolve each name against data_dir, validate, preserve order.
+        files = []
+        for name in args.files:
+            p = data_dir / name
+            if not p.is_file():
+                print(f"ERROR: file not found: {p}", file=sys.stderr)
+                sys.exit(1)
+            files.append(p)
+    else:
+        files = discover_files(data_dir)
+
     if not files:
         print(f"No recognised source files found in {data_dir}", file=sys.stderr)
         sys.exit(1)
@@ -647,7 +819,7 @@ def main() -> None:
         print(f"  {f.name}")
 
     for filepath in files:
-        ingest_file(filepath, conn, dry_run=args.dry_run)
+        ingest_file(filepath, conn, dry_run=args.dry_run, database_url=database_url)
 
     if conn:
         conn.close()
