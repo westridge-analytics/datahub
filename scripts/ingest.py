@@ -378,6 +378,7 @@ def _ez_record(
 def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
     """Normalise a row from a space-delimited 990-EZ file."""
     elf = row.get("elf", "").strip().upper()
+    # elf = P → 990-PF, skip. elf = Y/N → electronic indicator (17eo), include all.
     if elf in ("P",):
         return None
 
@@ -385,8 +386,16 @@ def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
     if ein is None:
         return None
 
-    # py12–14 use a_tax_prd; 15eo–17eo use a_tax_prd or tax_prd
-    tax_period_raw = row.get("a_tax_prd") or row.get("tax_prd") or row.get("tax_pd") or ""
+    # py12–14: no elf, tax period = taxprd or a_tax_prd
+    # 15eo–17eo: elf present, tax period = a_tax_prd or tax_prd
+    tax_period_raw = (
+        row.get("a_tax_prd")
+        or row.get("tax_prd")
+        or row.get("tax_pd")
+        or row.get("taxprd")   # py14_EZ.dat
+        or row.get("taxpd")    # 17eofinextractEZ.dat
+        or ""
+    )
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
@@ -396,7 +405,8 @@ def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
 
 def normalise_ez_csv(row: dict, source_file: str) -> dict | None:
     """Normalise a row from a CSV 990-EZ file."""
-    elf = (row.get("efile") or row.get("elf") or "").strip().upper()
+    # 20eoextractez.csv uses 'e-file' (with hyphen); others use 'efile'
+    elf = (row.get("efile") or row.get("e-file") or row.get("elf") or "").strip().upper()
     if elf != "E":
         return None
 
