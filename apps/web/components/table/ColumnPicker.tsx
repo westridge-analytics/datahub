@@ -59,14 +59,10 @@ interface ColumnPickerProps {
 export default function ColumnPicker({ visibleColumns, onChange, onClose }: ColumnPickerProps) {
   const ref = useRef<HTMLDivElement>(null)
 
+  // Close on window blur (switching apps, clicking outside browser)
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
+    window.addEventListener('blur', onClose)
+    return () => window.removeEventListener('blur', onClose)
   }, [onClose])
 
   function toggle(key: string) {
@@ -78,6 +74,12 @@ export default function ColumnPicker({ visibleColumns, onChange, onClose }: Colu
   }
 
   return (
+    <>
+      {/* Full-screen backdrop — catches all outside clicks */}
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 49 }}
+        onMouseDown={onClose}
+      />
     <div
       ref={ref}
       style={{
@@ -140,5 +142,6 @@ export default function ColumnPicker({ visibleColumns, onChange, onClose }: Colu
         </div>
       ))}
     </div>
+    </>
   )
 }
