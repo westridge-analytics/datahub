@@ -68,12 +68,15 @@ export async function GET(request: NextRequest) {
     // cohortId already validated as integer — safe to inline
     const cohortJoin = cohortId !== null
       ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}`
-      : ''
+      : `LEFT JOIN cohort_members cm ON cm.ein = f.ein
+         LEFT JOIN cohorts coh ON coh.id = cm.cohort_id`
+
     const cohortSelect = cohortId !== null
       ? `(SELECT name FROM cohorts WHERE id = ${cohortId}) AS cohort_name`
-      : `(SELECT c.name FROM cohort_members cm2 JOIN cohorts c ON c.id = cm2.cohort_id WHERE cm2.ein = f.ein LIMIT 1) AS cohort_name`
+      : `coh.name AS cohort_name`
 
     const offset = (page - 1) * pageSize
+    const hasFilters = clauses.length > 0 || cohortId !== null
 
     const queryText = `
       SELECT
@@ -90,17 +93,20 @@ export async function GET(request: NextRequest) {
       ORDER BY ${orderExpr} ${sortDir} NULLS LAST
       LIMIT ${pageSize} OFFSET ${offset}
     `
-    const countText = `
-      SELECT COUNT(*) AS total
-      FROM filings f
-      JOIN organizations o ON o.ein = f.ein
-      ${cohortJoin}
-      ${whereClause}
-    `
+
+    // Use fast stats estimate when no filters are applied; exact count otherwise.
+    const countText = hasFilters
+      ? `SELECT COUNT(*) AS total
+         FROM filings f
+         JOIN organizations o ON o.ein = f.ein
+         ${cohortId !== null ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}` : ''}
+         ${whereClause}`
+      : `SELECT reltuples::bigint AS total
+         FROM pg_class WHERE relname = 'filings'`
 
     const [rows, countRows] = await Promise.all([
       rawQuery(queryText, params),
-      rawQuery(countText, params),
+      rawQuery(countText, hasFilters ? params : []),
     ])
 
     const total = parseInt((countRows[0] as { total: string }).total, 10)
