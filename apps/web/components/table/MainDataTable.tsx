@@ -320,6 +320,7 @@ export default function MainDataTable() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const allOnPageSelected = rows.length > 0 && rows.every((r) => selectedEins.has(r.ein))
+  const selectedRowCount = rows.filter((r) => selectedEins.has(r.ein)).length
 
   // Active filter chips
   const activeFilterChips: { key: keyof Filters; label: string; value: string }[] = []
@@ -532,7 +533,7 @@ export default function MainDataTable() {
                 whiteSpace: 'nowrap',
               }}
             >
-              Tag {selectedEins.size} selected →
+              Tag {selectedEins.size} org{selectedEins.size !== 1 ? 's' : ''} →
             </button>
           )}
         </div>
@@ -734,7 +735,7 @@ export default function MainDataTable() {
           {total.toLocaleString()} rows
           {selectedEins.size > 0 && (
             <span style={{ color: '#6F99CC', fontWeight: 600 }}>
-              {' '}· {selectedEins.size} selected
+              {' '}· {selectedRowCount} row{selectedRowCount !== 1 ? 's' : ''} selected ({selectedEins.size} org{selectedEins.size !== 1 ? 's' : ''})
             </span>
           )}
         </span>

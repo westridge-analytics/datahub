@@ -78,21 +78,49 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * pageSize
     const hasFilters = clauses.length > 0 || cohortId !== null
 
-    const queryText = `
-      SELECT
-        f.*,
-        o.name,
-        o.state,
-        o.sector,
-        (f.total_revenue - f.total_expenses) AS net_income,
-        ${cohortSelect}
-      FROM filings f
-      JOIN organizations o ON o.ein = f.ein
-      ${cohortJoin}
-      ${whereClause}
-      ORDER BY ${orderExpr} ${sortDir} NULLS LAST
-      LIMIT ${pageSize} OFFSET ${offset}
-    `
+    // When filters only touch filings columns (no search/state/sector that need the org
+    // join before filtering), sort filings first in a materialized CTE then join orgs.
+    // This lets Postgres use the (sort_col, ein) index instead of a full hash join.
+    const orgFilterOnly = !search && !state && !sector && sortBy !== 'name' && cohortId === null
+    const filingsClauses = clauses.filter(c => !c.includes('o.'))
+    const filingsWhere = filingsClauses.length > 0 ? `WHERE ${filingsClauses.join(' AND ')}` : ''
+
+    const queryText = orgFilterOnly
+      ? `
+        WITH ranked AS MATERIALIZED (
+          SELECT * FROM filings
+          ${filingsWhere}
+          ORDER BY ${orderExpr} ${sortDir} NULLS LAST
+          LIMIT ${pageSize} OFFSET ${offset}
+        )
+        SELECT
+          r.*,
+          o.name,
+          o.state,
+          o.sector,
+          (r.total_revenue - r.total_expenses) AS net_income,
+          ${cohortId !== null
+            ? `(SELECT name FROM cohorts WHERE id = ${cohortId})`
+            : `(SELECT c.name FROM cohort_members cm2 JOIN cohorts c ON c.id = cm2.cohort_id WHERE cm2.ein = r.ein LIMIT 1)`
+          } AS cohort_name
+        FROM ranked r
+        JOIN organizations o ON o.ein = r.ein
+      `
+      : `
+        SELECT
+          f.*,
+          o.name,
+          o.state,
+          o.sector,
+          (f.total_revenue - f.total_expenses) AS net_income,
+          ${cohortSelect}
+        FROM filings f
+        JOIN organizations o ON o.ein = f.ein
+        ${cohortJoin}
+        ${whereClause}
+        ORDER BY ${orderExpr} ${sortDir} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `
 
     // Use fast stats estimate when no filters are applied; exact count otherwise.
     const countText = hasFilters
