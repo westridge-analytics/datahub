@@ -38,12 +38,17 @@ export async function GET(request: NextRequest) {
 
   try {
     // Allowlisted ORDER BY expression (sortBy validated above)
+    // orderExpr: for queries with f/o aliases; orderExprCTE: for inside the CTE (no alias)
     const orderExpr =
       sortBy === 'net_income'
         ? '(f.total_revenue - f.total_expenses)'
         : sortBy === 'name'
         ? 'o.name'
         : `f.${sortBy}`
+    const orderExprCTE =
+      sortBy === 'net_income'
+        ? '(total_revenue - total_expenses)'
+        : `${sortBy}`
 
     // Collect parameterized filter values
     const params: unknown[] = []
@@ -90,7 +95,7 @@ export async function GET(request: NextRequest) {
         WITH ranked AS MATERIALIZED (
           SELECT * FROM filings
           ${filingsWhere}
-          ORDER BY ${orderExpr} ${sortDir} NULLS LAST
+          ORDER BY ${orderExprCTE} ${sortDir} NULLS LAST
           LIMIT ${pageSize} OFFSET ${offset}
         )
         SELECT
