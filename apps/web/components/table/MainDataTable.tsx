@@ -594,25 +594,20 @@ export default function MainDataTable() {
         )}
       </div>
 
-      {/* ── Table ── */}
-      <div style={{ flex: 1, overflow: 'auto', minWidth: 0, minHeight: 0 }}>
+      {/* ── Loading bar ── */}
+      <div style={{ height: '3px', backgroundColor: '#E8EFF2', flexShrink: 0 }}>
         {loading && (
           <div style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            backgroundColor: 'rgba(255,255,255,0.85)',
-            padding: '12px 24px',
-            borderRadius: '6px',
-            border: '1px solid #BDD3DC',
-            fontSize: '13px',
-            color: '#3D5A63',
-            zIndex: 100,
-          }}>
-            Loading…
-          </div>
+            height: '100%',
+            backgroundColor: '#6F99CC',
+            width: '40%',
+            animation: 'loadingSlide 1.2s ease-in-out infinite',
+          }} />
         )}
+      </div>
+
+      {/* ── Table ── */}
+      <div style={{ flex: 1, overflow: 'auto', minWidth: 0, minHeight: 0 }}>
         <table
           style={{
             width: 'max-content',
