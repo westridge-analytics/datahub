@@ -93,8 +93,9 @@ export async function GET(request: NextRequest) {
     const queryText = orgFilterOnly
       ? `
         WITH ranked AS MATERIALIZED (
-          SELECT * FROM filings
-          ${filingsWhere}
+          SELECT * FROM filings f
+          WHERE EXISTS (SELECT 1 FROM organizations o WHERE o.ein = f.ein)
+          ${filingsClauses.length > 0 ? `AND ${filingsClauses.join(' AND ')}` : ''}
           ORDER BY ${orderExprCTE} ${sortDir} NULLS LAST
           LIMIT ${pageSize} OFFSET ${offset}
         )

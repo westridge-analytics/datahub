@@ -163,18 +163,20 @@ export default function MainDataTable() {
     return () => clearTimeout(t)
   }, [search])
 
-  // Fetch data
+  // Fetch data — AbortController cancels in-flight requests on re-trigger
   useEffect(() => {
+    const controller = new AbortController()
     const params = buildParams({ search: debouncedSearch, filters, sortBy, sortDir, page, pageSize })
     setLoading(true)
-    fetch(`/api/filings?${params}`)
+    fetch(`/api/filings?${params}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((json: ApiResponse) => {
         setRows(json.data ?? [])
         setTotal(json.total ?? 0)
       })
-      .catch(console.error)
+      .catch((err) => { if (err.name !== 'AbortError') console.error(err) })
       .finally(() => setLoading(false))
+    return () => controller.abort()
   }, [debouncedSearch, filters, sortBy, sortDir, page])
 
   // Fetch cohorts for tag modal
@@ -397,7 +399,7 @@ export default function MainDataTable() {
               onChange={(e) => { setSearch(e.target.value); setPage(1) }}
               style={{
                 paddingLeft: '30px',
-                paddingRight: '10px',
+                paddingRight: search ? '26px' : '10px',
                 paddingTop: '5px',
                 paddingBottom: '5px',
                 border: '1px solid #BDD3DC',
@@ -409,6 +411,27 @@ export default function MainDataTable() {
                 outline: 'none',
               }}
             />
+            {search && (
+              <button
+                onClick={() => { setSearch(''); setDebouncedSearch(''); setPage(1) }}
+                style={{
+                  position: 'absolute',
+                  right: '6px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#7A9AA4',
+                  fontSize: '14px',
+                  lineHeight: 1,
+                  padding: '0 2px',
+                }}
+                title="Clear search"
+              >
+                ×
+              </button>
+            )}
           </div>
 
           {/* Add Filter */}
