@@ -61,12 +61,20 @@ export async function GET(request: NextRequest) {
 
     if (search) {
       const trimmed = search.trim()
-      // Trigram similarity: word-order-independent and handles minor misspellings.
-      // similarity() uses the existing gin_trgm index on organizations.name.
-      // Threshold 0.1 is permissive enough for partial queries; EIN is always exact-ish.
-      const namePh = p(trimmed.toUpperCase())
+      // Primary: Postgres full-text search via websearch_to_tsquery.
+      //   - All words must match (AND), word-order-independent, handles plurals/stemming.
+      //   - Uses GIN index on name_vec (tsvector generated column).
+      // Fuzzy fallback: trigram similarity for short queries or misspellings
+      //   that FTS misses (e.g. single misspelled word).
+      // EIN: plain ILIKE substring match.
+      const ftsPh  = p(trimmed)
+      const trgmPh = p(trimmed.toUpperCase())
       const einPh  = p(`%${trimmed}%`)
-      clauses.push(`(similarity(o.name, ${namePh}) > 0.1 OR f.ein ILIKE ${einPh})`)
+      clauses.push(
+        `(o.name_vec @@ websearch_to_tsquery('english', ${ftsPh})` +
+        ` OR similarity(o.name, ${trgmPh}) > 0.4` +
+        ` OR f.ein ILIKE ${einPh})`
+      )
     }
     if (state) clauses.push(`o.state = ${p(state)}`)
     if (sector) clauses.push(`o.sector = ${p(sector)}`)

@@ -402,7 +402,7 @@ export default function MainDataTable() {
                 paddingRight: search ? '26px' : '10px',
                 paddingTop: '5px',
                 paddingBottom: '5px',
-                border: `1px solid ${loading && search ? '#6F99CC' : '#BDD3DC'}`,
+                border: `1px solid ${(loading || search !== debouncedSearch) && search ? '#6F99CC' : '#BDD3DC'}`,
                 borderRadius: '5px',
                 fontSize: '13px',
                 width: '220px',
@@ -412,7 +412,7 @@ export default function MainDataTable() {
                 transition: 'border-color 0.15s',
               }}
             />
-            {search && !loading && (
+            {search && !loading && search === debouncedSearch && (
               <button
                 onClick={() => { setSearch(''); setDebouncedSearch(''); setPage(1) }}
                 style={{
@@ -433,7 +433,7 @@ export default function MainDataTable() {
                 ×
               </button>
             )}
-            {loading && (
+            {(loading || search !== debouncedSearch) && (
               <span
                 style={{
                   position: 'absolute',
@@ -452,7 +452,7 @@ export default function MainDataTable() {
             )}
           </div>
           {/* Loading label — appears between search and filter button */}
-          {loading && (
+          {(loading || search !== debouncedSearch) && (
             <span style={{ fontSize: '11px', color: '#6F99CC', fontWeight: 600, whiteSpace: 'nowrap' }}>
               {search ? 'Searching…' : 'Loading…'}
             </span>
