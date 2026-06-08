@@ -60,22 +60,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
-      // Split into words so "chicago institute of art" matches "Art Institute of Chicago"
-      const words = search.trim().split(/\s+/).filter(Boolean)
-      if (words.length === 1) {
-        // Single word: also try EIN match
-        const ph = p(`%${words[0]}%`)
-        clauses.push(`(o.name ILIKE ${ph} OR f.ein ILIKE ${ph})`)
-      } else {
-        // Multi-word: each word must appear somewhere in the name (AND)
-        const wordClauses = words.map((w) => {
-          const ph = p(`%${w}%`)
-          return `o.name ILIKE ${ph}`
-        })
-        // Also allow an exact EIN match for the full search string
-        const einPh = p(`%${search}%`)
-        clauses.push(`((${wordClauses.join(' AND ')}) OR f.ein ILIKE ${einPh})`)
-      }
+      const trimmed = search.trim()
+      // Trigram similarity: word-order-independent and handles minor misspellings.
+      // similarity() uses the existing gin_trgm index on organizations.name.
+      // Threshold 0.1 is permissive enough for partial queries; EIN is always exact-ish.
+      const namePh = p(trimmed.toUpperCase())
+      const einPh  = p(`%${trimmed}%`)
+      clauses.push(`(similarity(o.name, ${namePh}) > 0.1 OR f.ein ILIKE ${einPh})`)
     }
     if (state) clauses.push(`o.state = ${p(state)}`)
     if (sector) clauses.push(`o.sector = ${p(sector)}`)

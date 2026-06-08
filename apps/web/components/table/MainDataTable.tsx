@@ -402,16 +402,17 @@ export default function MainDataTable() {
                 paddingRight: search ? '26px' : '10px',
                 paddingTop: '5px',
                 paddingBottom: '5px',
-                border: '1px solid #BDD3DC',
+                border: `1px solid ${loading && search ? '#6F99CC' : '#BDD3DC'}`,
                 borderRadius: '5px',
                 fontSize: '13px',
                 width: '220px',
                 backgroundColor: '#F2F4F1',
                 color: '#10232B',
                 outline: 'none',
+                transition: 'border-color 0.15s',
               }}
             />
-            {search && (
+            {search && !loading && (
               <button
                 onClick={() => { setSearch(''); setDebouncedSearch(''); setPage(1) }}
                 style={{
@@ -432,7 +433,30 @@ export default function MainDataTable() {
                 ×
               </button>
             )}
+            {loading && (
+              <span
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  width: '12px',
+                  height: '12px',
+                  border: '2px solid #BDD3DC',
+                  borderTopColor: '#6F99CC',
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                  animation: 'spin 0.7s linear infinite',
+                }}
+              />
+            )}
           </div>
+          {/* Loading label — appears between search and filter button */}
+          {loading && (
+            <span style={{ fontSize: '11px', color: '#6F99CC', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              {search ? 'Searching…' : 'Loading…'}
+            </span>
+          )}
 
           {/* Add Filter */}
           <div style={{ position: 'relative' }} ref={filterRef}>
@@ -591,18 +615,6 @@ export default function MainDataTable() {
               Clear all
             </button>
           </div>
-        )}
-      </div>
-
-      {/* ── Loading bar ── */}
-      <div style={{ height: '3px', backgroundColor: '#E8EFF2', flexShrink: 0 }}>
-        {loading && (
-          <div style={{
-            height: '100%',
-            backgroundColor: '#6F99CC',
-            width: '40%',
-            animation: 'loadingSlide 1.2s ease-in-out infinite',
-          }} />
         )}
       </div>
 
