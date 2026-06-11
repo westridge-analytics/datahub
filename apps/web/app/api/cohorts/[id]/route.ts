@@ -12,16 +12,19 @@ export async function PUT(
     return Response.json({ error: 'Invalid cohort id' }, { status: 400 })
   }
 
-  let body: { name?: string; color?: string }
+  let body: { name?: string; short_name?: string | null; description?: string | null; color?: string }
   try {
     body = await request.json()
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { name, color } = body
+  const { name, short_name, description, color } = body
   if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
     return Response.json({ error: 'name must be a non-empty string' }, { status: 400 })
+  }
+  if (short_name && short_name.length > 6) {
+    return Response.json({ error: 'short_name must be 6 characters or fewer' }, { status: 400 })
   }
 
   try {
@@ -35,6 +38,8 @@ export async function PUT(
     }
 
     if (name !== undefined) setClauses.push(`name = ${p(name.trim())}`)
+    if (short_name !== undefined) setClauses.push(`short_name = ${p(short_name?.trim() ?? null)}`)
+    if (description !== undefined) setClauses.push(`description = ${p(description?.trim() ?? null)}`)
     if (color !== undefined) setClauses.push(`color = ${p(color)}`)
 
     if (setClauses.length === 0) {

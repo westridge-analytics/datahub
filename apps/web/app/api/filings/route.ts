@@ -174,9 +174,11 @@ export async function GET(request: NextRequest) {
 
     // cohortId already validated as integer — safe to inline
     // Returns all cohort names for an EIN as a comma-separated string, or NULL if none.
+    // Each entry is "short|full" so the renderer can show short_name with a full-name tooltip.
+    // short = COALESCE(short_name, LEFT(name,6))
     const cohortNamesExpr = (einExpr: string) => cohortId !== null
-      ? `(SELECT name FROM cohorts WHERE id = ${cohortId}) AS cohort_names`
-      : `(SELECT string_agg(c.name, ', ' ORDER BY c.name)
+      ? `(SELECT COALESCE(short_name, LEFT(name,6)) || '|' || name FROM cohorts WHERE id = ${cohortId}) AS cohort_names`
+      : `(SELECT string_agg(COALESCE(c.short_name, LEFT(c.name,6)) || '|' || c.name, ',' ORDER BY c.name)
            FROM cohort_members cm2
            JOIN cohorts c ON c.id = cm2.cohort_id
            WHERE cm2.ein = ${einExpr}) AS cohort_names`

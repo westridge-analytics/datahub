@@ -174,23 +174,23 @@ function cellValue(
     case 'sector': return <span style={{ fontSize: '12px' }}>{row.sector ?? '—'}</span>
     case 'cohort_name': {
       if (!row.cohort_names) return <span style={{ color: '#7A9AA4' }}>—</span>
-      const names = row.cohort_names.split(', ')
-      const visible = names.slice(0, 2)
-      const overflow = names.length - 2
+      const pairs = row.cohort_names.split(',').map(e => { const [s, ...rest] = e.split('|'); return { short: s, full: rest.join('|') } })
+      const visible = pairs.slice(0, 3)
+      const overflow = pairs.length - 3
       return (
         <span style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
-          {visible.map(n => (
-            <span key={n} style={{ color: '#6F99CC', fontWeight: 500, fontSize: '11px',
-              backgroundColor: '#EEF5FB', borderRadius: '3px', padding: '1px 5px',
-              whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              title={n}>
-              {n}
+          {visible.map(({ short, full }) => (
+            <span key={full} title={full}
+              style={{ color: '#6F99CC', fontWeight: 600, fontSize: '11px',
+                backgroundColor: '#EEF5FB', borderRadius: '3px', padding: '1px 5px',
+                whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.01em' }}>
+              {short}
             </span>
           ))}
           {overflow > 0 && (
-            <span title={names.slice(2).join(', ')}
+            <span title={pairs.slice(3).map(p => p.full).join(', ')}
               style={{ fontSize: '10px', color: '#7A9AA4', whiteSpace: 'nowrap' }}>
-              +{overflow} more
+              +{overflow}
             </span>
           )}
         </span>

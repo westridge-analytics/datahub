@@ -43,6 +43,12 @@ export default function CohortsPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [editTitleValue, setEditTitleValue] = useState('')
 
+  // Short name + description editing
+  const [editingShortName, setEditingShortName] = useState(false)
+  const [shortNameValue, setShortNameValue] = useState('')
+  const [editingDescription, setEditingDescription] = useState(false)
+  const [descriptionValue, setDescriptionValue] = useState('')
+
   // Load cohorts
   useEffect(() => {
     async function load() {
@@ -161,6 +167,19 @@ export default function CohortsPage() {
       }
     } finally {
       setSavingNew(false)
+    }
+  }
+
+  async function updateCohortMeta(id: number, patch: { short_name?: string | null; description?: string | null }) {
+    const res = await fetch(`/api/cohorts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (res.ok) {
+      const updated: Cohort = await res.json()
+      setCohorts((prev) => prev.map((c) => c.id === id ? { ...c, ...updated } : c))
+      if (selectedCohort?.id === id) setSelectedCohort((prev) => prev ? { ...prev, ...updated } : prev)
     }
   }
 
@@ -551,6 +570,65 @@ export default function CohortsPage() {
                 <span style={{ fontSize: 12, color: '#7A9AA4', marginLeft: 4 }}>
                   {selectedCohort.member_count} {selectedCohort.member_count === 1 ? 'organization' : 'organizations'}
                 </span>
+              </div>
+
+              {/* Short name + description */}
+              <div style={{ backgroundColor: '#FAFCFD', borderBottom: '1px solid #BDD3DC', padding: '10px 24px', display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+                {/* Short name */}
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#7A9AA4', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Short name <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(max 6 chars, shown in table)</span>
+                  </div>
+                  {editingShortName ? (
+                    <input
+                      autoFocus
+                      maxLength={6}
+                      value={shortNameValue}
+                      onChange={e => setShortNameValue(e.target.value.slice(0, 6))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { updateCohortMeta(selectedCohort.id, { short_name: shortNameValue.trim() || null }); setEditingShortName(false) }
+                        if (e.key === 'Escape') setEditingShortName(false)
+                      }}
+                      onBlur={() => { updateCohortMeta(selectedCohort.id, { short_name: shortNameValue.trim() || null }); setEditingShortName(false) }}
+                      style={{ fontSize: 13, fontFamily: 'monospace', border: '1px solid #6F99CC', borderRadius: 4, padding: '2px 6px', width: 80, outline: 'none' }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() => { setEditingShortName(true); setShortNameValue(selectedCohort.short_name ?? '') }}
+                      style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 600, color: selectedCohort.short_name ? '#10232B' : '#7A9AA4', cursor: 'pointer', padding: '2px 4px', borderRadius: 3, border: '1px dashed #BDD3DC' }}
+                      title="Click to edit short name"
+                    >
+                      {selectedCohort.short_name || 'not set'}
+                    </span>
+                  )}
+                </div>
+                {/* Description */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#7A9AA4', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                    Description
+                  </div>
+                  {editingDescription ? (
+                    <textarea
+                      autoFocus
+                      value={descriptionValue}
+                      onChange={e => setDescriptionValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') setEditingDescription(false)
+                      }}
+                      onBlur={() => { updateCohortMeta(selectedCohort.id, { description: descriptionValue.trim() || null }); setEditingDescription(false) }}
+                      rows={2}
+                      style={{ fontSize: 12, border: '1px solid #6F99CC', borderRadius: 4, padding: '4px 6px', width: '100%', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() => { setEditingDescription(true); setDescriptionValue(selectedCohort.description ?? '') }}
+                      style={{ fontSize: 12, color: selectedCohort.description ? '#10232B' : '#7A9AA4', cursor: 'pointer', fontStyle: selectedCohort.description ? 'normal' : 'italic' }}
+                      title="Click to edit description"
+                    >
+                      {selectedCohort.description || 'Add a description…'}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Add member search */}

@@ -19,22 +19,25 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { name?: string; color?: string }
+  let body: { name?: string; short_name?: string; description?: string; color?: string }
   try {
     body = await request.json()
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { name, color } = body
+  const { name, short_name, description, color } = body
   if (!name || typeof name !== 'string' || name.trim() === '') {
     return Response.json({ error: 'name is required' }, { status: 400 })
+  }
+  if (short_name && short_name.length > 6) {
+    return Response.json({ error: 'short_name must be 6 characters or fewer' }, { status: 400 })
   }
 
   try {
     const rows = await sql`
-      INSERT INTO cohorts (name, color)
-      VALUES (${name.trim()}, ${color ?? null})
+      INSERT INTO cohorts (name, short_name, description, color)
+      VALUES (${name.trim()}, ${short_name?.trim() ?? null}, ${description?.trim() ?? null}, ${color ?? null})
       RETURNING *
     `
     return Response.json(rows[0] as Cohort, { status: 201 })

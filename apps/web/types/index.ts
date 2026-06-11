@@ -111,6 +111,8 @@ export interface FilingWithOrg extends Filing {
 export interface Cohort {
   id: number
   name: string
+  short_name: string | null
+  description: string | null
   color: string | null
   created_at: string
 }
