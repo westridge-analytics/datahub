@@ -132,7 +132,7 @@ describe('Filters', () => {
   })
 
   test('sector filter returns only matching NTEE category', async () => {
-    const json = await filings({ sector: 'Education' })
+    const json = await filings({ ntee_category: 'Education' })
     assert.ok(json.data.length > 0, 'no Education results')
     assert.ok(json.data.every(r => r.ntee_category === 'Education'), 'non-Education row in sector filter results')
   })

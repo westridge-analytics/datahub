@@ -4,19 +4,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import type { FilingWithOrg, Cohort } from '@/types'
 import { formatCurrency, formatEIN, formatYear } from '@/lib/format'
-import { NTEE_SECTORS } from '@/lib/ntee'
 import FilterChip from './FilterChip'
+import FilterPanel, { type Filters, buildFilterParams } from './FilterPanel'
 import ColumnPicker, { COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS } from './ColumnPicker'
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface Filters {
-  state?: string
-  sector?: string
-  cohort_id?: number
-  year_min?: number
-  year_max?: number
-}
 
 interface ApiResponse {
   data: (FilingWithOrg & { net_income?: number | null })[]
@@ -37,11 +27,7 @@ function buildParams(opts: {
 }): string {
   const p = new URLSearchParams()
   if (opts.search) p.set('search', opts.search)
-  if (opts.filters.state) p.set('state', opts.filters.state)
-  if (opts.filters.sector) p.set('sector', opts.filters.sector)
-  if (opts.filters.cohort_id) p.set('cohort_id', String(opts.filters.cohort_id))
-  if (opts.filters.year_min) p.set('year_min', String(opts.filters.year_min))
-  if (opts.filters.year_max) p.set('year_max', String(opts.filters.year_max))
+  for (const [k, v] of Object.entries(buildFilterParams(opts.filters))) p.set(k, v)
   p.set('sort_by', opts.sortBy)
   p.set('sort_dir', opts.sortDir)
   p.set('page', String(opts.page))
@@ -309,15 +295,6 @@ export default function MainDataTable() {
   const [tagModalOpen, setTagModalOpen] = useState(false)
   const [cohorts, setCohorts] = useState<Cohort[]>([])
 
-  // Filter form state (inside dropdown)
-  const [filterDraft, setFilterDraft] = useState<{
-    state: string
-    sector: string
-    cohort_id: string
-    year_min: string
-    year_max: string
-  }>({ state: '', sector: '', cohort_id: '', year_min: '', year_max: '' })
-
   const filterRef = useRef<HTMLDivElement>(null)
   const columnRef = useRef<HTMLDivElement>(null)
 
@@ -378,32 +355,7 @@ export default function MainDataTable() {
     setPage(1)
   }
 
-  // Apply filter draft
-  function applyFilters() {
-    const f: Filters = {}
-    if (filterDraft.state.trim()) f.state = filterDraft.state.trim().toUpperCase()
-    if (filterDraft.sector) f.sector = filterDraft.sector
-    if (filterDraft.cohort_id) f.cohort_id = parseInt(filterDraft.cohort_id, 10)
-    if (filterDraft.year_min) f.year_min = parseInt(filterDraft.year_min, 10)
-    if (filterDraft.year_max) f.year_max = parseInt(filterDraft.year_max, 10)
-    setFilters(f)
-    setPage(1)
-    setFilterOpen(false)
-  }
-
-  // Remove individual filter
-  function removeFilter(key: keyof Filters) {
-    setFilters((prev) => {
-      const next = { ...prev }
-      delete next[key]
-      return next
-    })
-    setFilterDraft((prev) => ({
-      ...prev,
-      [key]: '',
-    }))
-    setPage(1)
-  }
+  function applyFilters(f: Filters) { setFilters(f); setPage(1) }
 
   // Selection
   function toggleSelectAll() {
@@ -492,16 +444,39 @@ export default function MainDataTable() {
   const allOnPageSelected = rows.length > 0 && rows.every((r) => selectedEins.has(r.ein))
   const selectedRowCount = rows.filter((r) => selectedEins.has(r.ein)).length
 
-  // Active filter chips
-  const activeFilterChips: { key: keyof Filters; label: string; value: string }[] = []
-  if (filters.state) activeFilterChips.push({ key: 'state', label: 'State', value: filters.state })
-  if (filters.sector) activeFilterChips.push({ key: 'sector', label: 'NTEE Category', value: filters.sector })
+  // Active filter chips — one chip per active filter group
+  const activeFilterChips: { label: string; value: string; onRemove: () => void }[] = []
+  const removeKey = (key: keyof Filters) => { setFilters(f => { const n = { ...f }; delete n[key]; return n }); setPage(1) }
+  if (filters.state?.length)        activeFilterChips.push({ label: 'State', value: filters.state.join(', '), onRemove: () => removeKey('state') })
+  if (filters.ntee_category?.length) activeFilterChips.push({ label: 'NTEE Category', value: filters.ntee_category.join(', '), onRemove: () => removeKey('ntee_category') })
+  if (filters.form_type?.length)    activeFilterChips.push({ label: 'Form Type', value: filters.form_type.join(', '), onRemove: () => removeKey('form_type') })
+  if (filters.filing_method?.length) activeFilterChips.push({ label: 'Filing Method', value: filters.filing_method.join(', '), onRemove: () => removeKey('filing_method') })
   if (filters.cohort_id) {
-    const c = cohorts.find((c) => c.id === filters.cohort_id)
-    activeFilterChips.push({ key: 'cohort_id', label: 'Cohort', value: c?.name ?? String(filters.cohort_id) })
+    const c = cohorts.find(c => c.id === filters.cohort_id)
+    activeFilterChips.push({ label: 'Cohort', value: c?.name ?? String(filters.cohort_id), onRemove: () => removeKey('cohort_id') })
   }
-  if (filters.year_min) activeFilterChips.push({ key: 'year_min', label: 'Year ≥', value: String(filters.year_min) })
-  if (filters.year_max) activeFilterChips.push({ key: 'year_max', label: 'Year ≤', value: String(filters.year_max) })
+  if (filters.year_min) activeFilterChips.push({ label: 'Year ≥', value: String(filters.year_min), onRemove: () => removeKey('year_min') })
+  if (filters.year_max) activeFilterChips.push({ label: 'Year ≤', value: String(filters.year_max), onRemove: () => removeKey('year_max') })
+  const GOV_CHIP_LABELS: Record<string, string> = {
+    has_lobbying: 'Lobbying', has_political_activity: 'Political Activity',
+    has_unrelated_business_income: 'UBI', has_foreign_office: 'Foreign Office',
+    has_foreign_grants: 'Foreign Grants', operates_hospital: 'Hospital',
+    operates_school: 'School', has_related_orgs: 'Related Orgs',
+  }
+  for (const k of Object.keys(GOV_CHIP_LABELS)) {
+    const v = (filters as Record<string, unknown>)[k]
+    if (v !== undefined) activeFilterChips.push({ label: GOV_CHIP_LABELS[k], value: v ? 'Yes' : 'No',
+      onRemove: () => { setFilters(f => { const n = { ...f }; delete (n as Record<string,unknown>)[k]; return n }); setPage(1) } })
+  }
+  if (filters.ranges) {
+    const allCols = COLUMN_GROUPS.flatMap(g => g.columns)
+    for (const [col, { min, max }] of Object.entries(filters.ranges)) {
+      const colLabel = allCols.find(c => c.key === col)?.label ?? col
+      const rangeStr = [min !== undefined ? `≥ ${min.toLocaleString()}` : '', max !== undefined ? `≤ ${max.toLocaleString()}` : ''].filter(Boolean).join(' ')
+      activeFilterChips.push({ label: colLabel, value: rangeStr,
+        onRemove: () => { setFilters(f => { const n = { ...f, ranges: { ...f.ranges } }; delete n.ranges![col]; if (!Object.keys(n.ranges!).length) delete n.ranges; return n }); setPage(1) } })
+    }
+  }
 
   // Ordered visible columns
   const columnOrder = COLUMN_GROUPS.flatMap((g) => g.columns.map((c) => c.key))
@@ -628,92 +603,18 @@ export default function MainDataTable() {
 
           {/* Add Filter */}
           <div style={{ position: 'relative' }} ref={filterRef}>
-            <button
-              onClick={() => setFilterOpen((o) => !o)}
-              style={btnStyle}
-            >
-              + Add Filter
+            <button onClick={() => setFilterOpen((o) => !o)} style={btnStyle}>
+              {activeFilterChips.length > 0
+                ? `Filters (${activeFilterChips.length}) ▾`
+                : '+ Add Filter'}
             </button>
             {filterOpen && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: '4px',
-                  backgroundColor: '#FFFFFF',
-                  border: '1px solid #BDD3DC',
-                  borderRadius: '6px',
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-                  zIndex: 50,
-                  padding: '14px',
-                  minWidth: '260px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                }}
-              >
-                <div style={fieldRow}>
-                  <label style={fieldLabel}>State</label>
-                  <input
-                    type="text"
-                    maxLength={2}
-                    placeholder="e.g. CA"
-                    value={filterDraft.state}
-                    onChange={(e) => setFilterDraft((d) => ({ ...d, state: e.target.value }))}
-                    style={filterInput}
-                  />
-                </div>
-                <div style={fieldRow}>
-                  <label style={fieldLabel}>Sector</label>
-                  <select
-                    value={filterDraft.sector}
-                    onChange={(e) => setFilterDraft((d) => ({ ...d, sector: e.target.value }))}
-                    style={filterInput}
-                  >
-                    <option value="">All</option>
-                    {NTEE_SECTORS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={fieldRow}>
-                  <label style={fieldLabel}>Year Range</label>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <input
-                      type="number"
-                      placeholder="Min"
-                      value={filterDraft.year_min}
-                      onChange={(e) => setFilterDraft((d) => ({ ...d, year_min: e.target.value }))}
-                      style={{ ...filterInput, width: '70px' }}
-                    />
-                    <input
-                      type="number"
-                      placeholder="Max"
-                      value={filterDraft.year_max}
-                      onChange={(e) => setFilterDraft((d) => ({ ...d, year_max: e.target.value }))}
-                      style={{ ...filterInput, width: '70px' }}
-                    />
-                  </div>
-                </div>
-                <div style={fieldRow}>
-                  <label style={fieldLabel}>Cohort</label>
-                  <select
-                    value={filterDraft.cohort_id}
-                    onChange={(e) => setFilterDraft((d) => ({ ...d, cohort_id: e.target.value }))}
-                    style={filterInput}
-                  >
-                    <option value="">All</option>
-                    {cohorts.map((c) => (
-                      <option key={c.id} value={String(c.id)}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '4px' }}>
-                  <button onClick={() => setFilterOpen(false)} style={btnStyleSecondary}>Cancel</button>
-                  <button onClick={applyFilters} style={btnStylePrimary}>Apply</button>
-                </div>
-              </div>
+              <FilterPanel
+                filters={filters}
+                cohorts={cohorts}
+                onChange={(f) => { applyFilters(f) }}
+                onClose={() => setFilterOpen(false)}
+              />
             )}
           </div>
 
@@ -757,20 +658,16 @@ export default function MainDataTable() {
         {activeFilterChips.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
             <span style={{ fontSize: '11px', color: '#7A9AA4', marginRight: '2px' }}>Active filters:</span>
-            {activeFilterChips.map((chip) => (
+            {activeFilterChips.map((chip, i) => (
               <FilterChip
-                key={chip.key}
+                key={i}
                 label={chip.label}
                 value={chip.value}
-                onRemove={() => removeFilter(chip.key)}
+                onRemove={chip.onRemove}
               />
             ))}
             <button
-              onClick={() => {
-                setFilters({})
-                setFilterDraft({ state: '', sector: '', cohort_id: '', year_min: '', year_max: '' })
-                setPage(1)
-              }}
+              onClick={() => { setFilters({}); setPage(1) }}
               style={{
                 fontSize: '11px',
                 color: '#7A9AA4',
