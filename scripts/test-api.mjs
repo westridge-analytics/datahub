@@ -134,16 +134,16 @@ describe('Filters', () => {
   test('sector filter returns only matching NTEE category', async () => {
     const json = await filings({ sector: 'Education' })
     assert.ok(json.data.length > 0, 'no Education results')
-    assert.ok(json.data.every(r => r.sector === 'Education'), 'non-Education row in sector filter results')
+    assert.ok(json.data.every(r => r.ntee_category === 'Education'), 'non-Education row in sector filter results')
   })
 
-  test('sector field is NTEE-derived (no raw BMF values)', async () => {
+  test('ntee_category is always a known NTEE value', async () => {
     const json = await filings({})
     const knownNtee = ['Arts, Culture & Humanities','Education','Environment & Animals','Health',
       'Human Services','International & Foreign Affairs','Public & Societal Benefit',
       'Religion','Mutual & Membership Benefit','Other']
-    const bad = json.data.filter(r => r.sector && !knownNtee.includes(r.sector))
-    assert.equal(bad.length, 0, `unexpected sector values: ${[...new Set(bad.map(r => r.sector))].join(', ')}`)
+    const bad = json.data.filter(r => r.ntee_category && !knownNtee.includes(r.ntee_category))
+    assert.equal(bad.length, 0, `unexpected ntee_category values: ${[...new Set(bad.map(r => r.ntee_category))].join(', ')}`)
   })
 
   test('year_min filter works', async () => {

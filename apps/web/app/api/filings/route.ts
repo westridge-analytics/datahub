@@ -5,7 +5,7 @@ import { SECTOR_TO_NTEE_LETTERS } from '@/lib/ntee'
 
 // Derives a readable sector label from ntee_code in SQL.
 // 'Other' catches null, empty, and unknown codes.
-const nteeSectorExpr = (alias: string) => `
+const nteeExpr = (alias: string) => `
   CASE LEFT(${alias}.ntee_code, 1)
     WHEN 'A' THEN 'Arts, Culture & Humanities'
     WHEN 'B' THEN 'Education'
@@ -33,7 +33,7 @@ const nteeSectorExpr = (alias: string) => `
     WHEN 'X' THEN 'Religion'
     WHEN 'Y' THEN 'Mutual & Membership Benefit'
     ELSE 'Other'
-  END AS sector,
+  END AS ntee_category,
   ${alias}.ntee_code`
 
 const ALLOWED_SORT_COLUMNS = new Set([
@@ -157,7 +157,8 @@ export async function GET(request: NextRequest) {
           f.*,
           o.name,
           o.state,
-          ${nteeSectorExpr('o')},
+          o.sector,
+          ${nteeExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
           ${cohortSelect}
         FROM filings f
@@ -183,7 +184,8 @@ export async function GET(request: NextRequest) {
           r.*,
           o.name,
           o.state,
-          ${nteeSectorExpr('o')},
+          o.sector,
+          ${nteeExpr('o')},
           (r.total_revenue - r.total_expenses) AS net_income,
           ${cohortId !== null
             ? `(SELECT name FROM cohorts WHERE id = ${cohortId})`
@@ -199,7 +201,8 @@ export async function GET(request: NextRequest) {
           f.*,
           o.name,
           o.state,
-          ${nteeSectorExpr('o')},
+          o.sector,
+          ${nteeExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
           ${cohortSelect}
         FROM filings f

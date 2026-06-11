@@ -3,10 +3,12 @@ import { NextResponse } from 'next/server'
 
 export default auth((req) => {
   const isLoggedIn   = !!req.auth
-  const isLoginPage  = req.nextUrl.pathname === '/login'
-  const isAuthApi    = req.nextUrl.pathname.startsWith('/api/auth')
+  const path         = req.nextUrl.pathname
+  const isLoginPage  = path === '/login'
+  const isPublicApi  = path.startsWith('/api/auth') || path.startsWith('/api/filings') ||
+                       path.startsWith('/api/organizations') || path.startsWith('/api/cohorts')
 
-  if (isAuthApi) return NextResponse.next()
+  if (isPublicApi) return NextResponse.next()
   if (isLoginPage) {
     if (isLoggedIn) return NextResponse.redirect(new URL('/', req.url))
     return NextResponse.next()

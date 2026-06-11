@@ -67,6 +67,7 @@ const ALL_COL_LABELS: Record<string, string> = {
   fiscal_year: 'Year',
   form_type: 'Form Type',
   filing_method: 'Filing Method',
+  ntee_category: 'NTEE Category',
   ntee_code: 'NTEE Code',
   subsection_code: 'IRC Subsection',
   state: 'State',
@@ -200,6 +201,7 @@ function cellValue(
         </span>
       )
     }
+    case 'ntee_category': return <span style={{ fontSize: '12px' }}>{row.ntee_category ?? '—'}</span>
     case 'ntee_code': return row.ntee_code ? <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>{row.ntee_code}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
     case 'form_type':       return row.form_type ? <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>{row.form_type}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
     case 'filing_method':  return (row as any).filing_method ?? <span style={{ color: '#7A9AA4' }}>—</span>
@@ -493,7 +495,7 @@ export default function MainDataTable() {
   // Active filter chips
   const activeFilterChips: { key: keyof Filters; label: string; value: string }[] = []
   if (filters.state) activeFilterChips.push({ key: 'state', label: 'State', value: filters.state })
-  if (filters.sector) activeFilterChips.push({ key: 'sector', label: 'Sector', value: filters.sector })
+  if (filters.sector) activeFilterChips.push({ key: 'sector', label: 'NTEE Category', value: filters.sector })
   if (filters.cohort_id) {
     const c = cohorts.find((c) => c.id === filters.cohort_id)
     activeFilterChips.push({ key: 'cohort_id', label: 'Cohort', value: c?.name ?? String(filters.cohort_id) })
