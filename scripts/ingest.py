@@ -54,6 +54,15 @@ SPACE_DELIM_EZ_PATTERNS = {
     "17eofinextractEZ.dat",
 }
 
+# Space-delimited 990-PF files
+SPACE_DELIM_PF_PATTERNS = {
+    "py12_990pf.dat",
+    "py13_990pf.dat",
+    "py14_990pf.dat",
+    "15eofinextract990pf.dat",
+    "16eofinextract990pf.dat",
+}
+
 # CSV files (18eo–24eo) — filter to elf == 'E' for full Form 990.
 CSV_PATTERNS_PREFIX = "eoextract990.csv"  # filenames like 18eoextract990.csv
 
@@ -61,6 +70,11 @@ CSV_PATTERNS_PREFIX = "eoextract990.csv"  # filenames like 18eoextract990.csv
 def is_ez_csv(filename: str) -> bool:
     f = filename.lower()
     return f.endswith(".csv") and ("ez" in f) and f[:2].isdigit()
+
+# CSV 990-PF files — filenames like 20eoextract990pf.csv
+def is_pf_csv(filename: str) -> bool:
+    f = filename.lower()
+    return f.endswith(".csv") and "990pf" in f and f[:2].isdigit()
 
 NTEE_SECTOR_MAP = {
     "A": "Arts, Culture & Humanities",
@@ -403,6 +417,95 @@ def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
     return _ez_record(ein, tax_period, fiscal_year, row, source_file)
 
 
+def _pf_record(
+    ein: str,
+    tax_period: str,
+    fiscal_year: int,
+    row: dict,
+    source_file: str,
+) -> dict:
+    """Build a normalised filing dict from 990-PF fields.
+
+    PF revenue = TOTRCPTPERBKS (total receipts per books).
+    PF net assets = TFUNDNWORTH (total fund net worth).
+    PF doesn't use program_revenue / program_expenses in the same sense
+    as Form 990; those fields are left None.
+    """
+    total_revenue    = parse_int(row.get("totrcptperbks"))
+    total_expenses   = parse_int(row.get("totexpnspbks"))
+    total_assets     = parse_int(row.get("totassetsend"))
+    total_liabilities = parse_int(row.get("totliabend"))
+    total_net_assets = parse_int(row.get("tfundnworth"))
+    contributions    = parse_int(row.get("grscontrgifts"))
+    investment_income = parse_int(row.get("netinvstinc"))
+    # PF has no program_revenue line; other income = total - contribs - investment
+    other_revenue    = derive_other_revenue(total_revenue, contributions, None, investment_income)
+
+    # Expenses: TOPRADMNEXPNSA is the total admin/operating expense column
+    ga_expenses      = parse_int(row.get("topradmnexpnsa"))
+
+    # Balance sheet
+    cash_equiv       = parse_int(row.get("othrcashamt"))
+    # TOTINVSTSEC = total investment securities (stocks + bonds)
+    lt_investments   = parse_int(row.get("totinvstsec"))
+    if lt_investments is None:
+        lt_investments = sum_fields(row, "invstcorpstk", "invstcorpbnd", "invstgovtoblig")
+
+    return {
+        "ein": ein,
+        "tax_period": tax_period,
+        "fiscal_year": fiscal_year,
+        "total_revenue": total_revenue,
+        "total_expenses": total_expenses,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_net_assets": total_net_assets,
+        "contributions": contributions,
+        "program_revenue": None,
+        "investment_income": investment_income,
+        "other_revenue": other_revenue,
+        "program_expenses": None,
+        "ga_expenses": ga_expenses,
+        "fundraising_expenses": None,
+        "cash_equiv": cash_equiv,
+        "st_investments": None,
+        "lt_investments": lt_investments,
+        "ppe": None,
+        "unrestr_net_assets": None,
+        "restr_net_assets": None,
+        "source_file": source_file,
+        "form_type": "990PF",
+    }
+
+
+def normalise_pf_space_delimited(row: dict, source_file: str) -> dict | None:
+    """Normalise a row from a space-delimited 990-PF file."""
+    ein = fmt_ein(row.get("ein", ""))
+    if ein is None:
+        return None
+
+    tax_period_raw = row.get("tax_prd") or row.get("tax_pd") or ""
+    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
+    if tax_period is None:
+        return None
+
+    return _pf_record(ein, tax_period, fiscal_year, row, source_file)
+
+
+def normalise_pf_csv(row: dict, source_file: str) -> dict | None:
+    """Normalise a row from a CSV 990-PF file. Includes both E and P filers."""
+    ein = fmt_ein(row.get("ein", ""))
+    if ein is None:
+        return None
+
+    tax_period_raw = row.get("tax_prd") or row.get("tax_pd") or ""
+    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
+    if tax_period is None:
+        return None
+
+    return _pf_record(ein, tax_period, fiscal_year, row, source_file)
+
+
 def normalise_ez_csv(row: dict, source_file: str) -> dict | None:
     """Normalise a row from a CSV 990-EZ file."""
     # 20eoextractez.csv uses 'e-file' (with hyphen); others use 'efile'
@@ -433,6 +536,10 @@ def is_space_delimited(filename: str) -> bool:
 
 def is_space_delimited_ez(filename: str) -> bool:
     return filename in SPACE_DELIM_EZ_PATTERNS
+
+
+def is_space_delimited_pf(filename: str) -> bool:
+    return filename in SPACE_DELIM_PF_PATTERNS
 
 
 def _normalise_row(row: dict) -> dict:
@@ -624,9 +731,11 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
 
     space_delim    = is_space_delimited(filename)
     space_delim_ez = is_space_delimited_ez(filename)
+    space_delim_pf = is_space_delimited_pf(filename)
     ez_csv         = is_ez_csv(filename)
+    pf_csv         = is_pf_csv(filename)
 
-    if space_delim or space_delim_ez:
+    if space_delim or space_delim_ez or space_delim_pf:
         raw_rows = read_space_delimited(filepath)
     else:
         raw_rows = read_csv(filepath)
@@ -644,8 +753,12 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
             rec = normalise_space_delimited(raw, filename)
         elif space_delim_ez:
             rec = normalise_ez_space_delimited(raw, filename)
+        elif space_delim_pf:
+            rec = normalise_pf_space_delimited(raw, filename)
         elif ez_csv:
             rec = normalise_ez_csv(raw, filename)
+        elif pf_csv:
+            rec = normalise_pf_csv(raw, filename)
         else:
             rec = normalise_csv(raw, filename)
 
@@ -734,15 +847,15 @@ def _file_sort_key(f: Path) -> int:
 
 
 def discover_files(data_dir: Path) -> list[Path]:
-    """Return all recognised 990 and 990-EZ source files sorted oldest-to-newest."""
+    """Return all recognised 990, 990-EZ, and 990-PF source files sorted oldest-to-newest."""
     result = []
     for f in data_dir.iterdir():
         name = f.name
-        if name in SPACE_DELIM_PATTERNS or name in SPACE_DELIM_EZ_PATTERNS:
+        if name in SPACE_DELIM_PATTERNS or name in SPACE_DELIM_EZ_PATTERNS or name in SPACE_DELIM_PF_PATTERNS:
             result.append(f)
         elif name.endswith(CSV_PATTERNS_PREFIX) and name[:2].isdigit():
             result.append(f)
-        elif is_ez_csv(name):
+        elif is_ez_csv(name) or is_pf_csv(name):
             result.append(f)
     return sorted(result, key=_file_sort_key)
 
