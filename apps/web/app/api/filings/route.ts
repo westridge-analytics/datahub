@@ -96,9 +96,9 @@ export async function GET(request: NextRequest) {
 
     if (search) {
       const trimmed = search.trim()
-      // Build a separate params array so search + count queries both use $1,$2,$3
+      // Build a separate params array so search + count queries both use $1,$2
       // (passing a shared array with extra elements causes a Postgres bind error)
-      searchParams = [trimmed, trimmed.toUpperCase(), `%${trimmed}%`]
+      searchParams = [trimmed, `%${trimmed}%`]
       const extraClauses = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
       const extraWhere = extraClauses.length > 0 ? `AND ${extraClauses.join(' AND ')}` : ''
 
@@ -106,9 +106,8 @@ export async function GET(request: NextRequest) {
         WITH matched_eins AS MATERIALIZED (
           SELECT ein FROM organizations
           WHERE name_vec @@ websearch_to_tsquery('english', $1)
-             OR similarity(name, $2) > 0.4
           UNION
-          SELECT ein FROM filings WHERE ein ILIKE $3
+          SELECT ein FROM filings WHERE ein ILIKE $2
         )`
 
       queryText = `
@@ -183,9 +182,8 @@ export async function GET(request: NextRequest) {
         WITH matched_eins AS MATERIALIZED (
           SELECT ein FROM organizations
           WHERE name_vec @@ websearch_to_tsquery('english', $1)
-             OR similarity(name, $2) > 0.4
           UNION
-          SELECT ein FROM filings WHERE ein ILIKE $3
+          SELECT ein FROM filings WHERE ein ILIKE $2
         )
         SELECT COUNT(*) AS total
         FROM filings f
@@ -203,9 +201,10 @@ export async function GET(request: NextRequest) {
 
     // searchParams is isolated: count query uses same $1,$2,$3 as main query.
     // Other paths share the same params array throughout.
+    const queryParams = search ? searchParams : params
     const [rows, countRows] = await Promise.all([
-      rawQuery(queryText, params),
-      rawQuery(countText, hasFilters ? (search ? searchParams : params) : []),
+      rawQuery(queryText, queryParams),
+      rawQuery(countText, hasFilters ? queryParams : []),
     ])
 
     const total = parseInt((countRows[0] as { total: string }).total, 10)
