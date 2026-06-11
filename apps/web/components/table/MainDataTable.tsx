@@ -287,6 +287,8 @@ export default function MainDataTable() {
   const [loading, setLoading] = useState(false)
 
   const [selectedEins, setSelectedEins] = useState<Set<string>>(new Set())
+  const [allFilteredSelected, setAllFilteredSelected] = useState(false)
+  const [selectingAll, setSelectingAll] = useState(false)
   const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS)
 
   // Dropdowns
@@ -355,7 +357,7 @@ export default function MainDataTable() {
     setPage(1)
   }
 
-  function applyFilters(f: Filters) { setFilters(f); setPage(1) }
+  function applyFilters(f: Filters) { setFilters(f); setPage(1); setAllFilteredSelected(false) }
 
   // Selection
   function toggleSelectAll() {
@@ -363,11 +365,31 @@ export default function MainDataTable() {
       const next = new Set(selectedEins)
       rows.forEach((r) => next.delete(r.ein))
       setSelectedEins(next)
+      setAllFilteredSelected(false)
     } else {
       const next = new Set(selectedEins)
       rows.forEach((r) => next.add(r.ein))
       setSelectedEins(next)
     }
+  }
+
+  async function selectAllFiltered() {
+    setSelectingAll(true)
+    try {
+      const p = buildParams({ search, sortBy, sortDir, page: 1, filters, pageSize: 10000 })
+      const res = await fetch(`/api/filings?${p.toString()}`)
+      const json = await res.json()
+      const eins = new Set<string>((json.data as { ein: string }[]).map(r => r.ein))
+      setSelectedEins(eins)
+      setAllFilteredSelected(true)
+    } finally {
+      setSelectingAll(false)
+    }
+  }
+
+  function clearSelection() {
+    setSelectedEins(new Set())
+    setAllFilteredSelected(false)
   }
 
   function toggleRow(ein: string) {
@@ -725,6 +747,43 @@ export default function MainDataTable() {
               <th style={{ ...thStyle, width: '90px' }} />
             </tr>
           </thead>
+          {/* Select-all-filtered banner */}
+          {allOnPageSelected && !allFilteredSelected && total > rows.length && (
+            <tbody>
+              <tr>
+                <td colSpan={orderedVisible.length + 2} style={{
+                  backgroundColor: '#EEF5FB', textAlign: 'center',
+                  padding: '7px 16px', fontSize: '12px', color: '#10232B',
+                  borderBottom: '1px solid #BDD3DC',
+                }}>
+                  All {rows.length} rows on this page are selected.{' '}
+                  <button onClick={selectingAll ? undefined : selectAllFiltered}
+                    style={{ color: '#3A6FA0', fontWeight: 600, background: 'none', border: 'none',
+                      cursor: selectingAll ? 'default' : 'pointer', padding: 0, fontSize: '12px' }}>
+                    {selectingAll ? 'Loading…' : `Select all ${total.toLocaleString()} matching rows`}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          )}
+          {allFilteredSelected && (
+            <tbody>
+              <tr>
+                <td colSpan={orderedVisible.length + 2} style={{
+                  backgroundColor: '#EEF5FB', textAlign: 'center',
+                  padding: '7px 16px', fontSize: '12px', color: '#10232B',
+                  borderBottom: '1px solid #BDD3DC',
+                }}>
+                  All {selectedEins.size.toLocaleString()} matching rows are selected.{' '}
+                  <button onClick={clearSelection}
+                    style={{ color: '#3A6FA0', fontWeight: 600, background: 'none', border: 'none',
+                      cursor: 'pointer', padding: 0, fontSize: '12px' }}>
+                    Clear selection
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          )}
           <tbody>
             {rows.length === 0 && !loading && (
               <tr>
