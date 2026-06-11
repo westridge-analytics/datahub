@@ -67,6 +67,7 @@ const ALL_COL_LABELS: Record<string, string> = {
   fiscal_year: 'Year',
   form_type: 'Form Type',
   filing_method: 'Filing Method',
+  ntee_code: 'NTEE Code',
   subsection_code: 'IRC Subsection',
   state: 'State',
   sector: 'Sector',
@@ -199,6 +200,7 @@ function cellValue(
         </span>
       )
     }
+    case 'ntee_code': return row.ntee_code ? <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>{row.ntee_code}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
     case 'form_type':       return row.form_type ? <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>{row.form_type}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
     case 'filing_method':  return (row as any).filing_method ?? <span style={{ color: '#7A9AA4' }}>—</span>
     case 'subsection_code': {

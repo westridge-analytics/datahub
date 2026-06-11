@@ -103,6 +103,7 @@ export interface FilingWithOrg extends Filing {
   name: string
   state: string
   sector: string | null
+  ntee_code: string | null
   cohort_name: string | null
 }
 

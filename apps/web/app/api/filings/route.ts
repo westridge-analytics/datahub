@@ -1,6 +1,40 @@
 import { type NextRequest } from 'next/server'
 import { sql, rawQuery } from '@/lib/db'
 import type { FilingWithOrg } from '@/types'
+import { SECTOR_TO_NTEE_LETTERS } from '@/lib/ntee'
+
+// Derives a readable sector label from ntee_code in SQL.
+// 'Other' catches null, empty, and unknown codes.
+const nteeSectorExpr = (alias: string) => `
+  CASE LEFT(${alias}.ntee_code, 1)
+    WHEN 'A' THEN 'Arts, Culture & Humanities'
+    WHEN 'B' THEN 'Education'
+    WHEN 'C' THEN 'Environment & Animals'
+    WHEN 'D' THEN 'Environment & Animals'
+    WHEN 'E' THEN 'Health'
+    WHEN 'F' THEN 'Health'
+    WHEN 'G' THEN 'Health'
+    WHEN 'H' THEN 'Health'
+    WHEN 'I' THEN 'Human Services'
+    WHEN 'J' THEN 'Human Services'
+    WHEN 'K' THEN 'Human Services'
+    WHEN 'L' THEN 'Human Services'
+    WHEN 'M' THEN 'Human Services'
+    WHEN 'N' THEN 'Human Services'
+    WHEN 'O' THEN 'Human Services'
+    WHEN 'P' THEN 'Human Services'
+    WHEN 'Q' THEN 'International & Foreign Affairs'
+    WHEN 'R' THEN 'Public & Societal Benefit'
+    WHEN 'S' THEN 'Public & Societal Benefit'
+    WHEN 'T' THEN 'Public & Societal Benefit'
+    WHEN 'U' THEN 'Public & Societal Benefit'
+    WHEN 'V' THEN 'Public & Societal Benefit'
+    WHEN 'W' THEN 'Public & Societal Benefit'
+    WHEN 'X' THEN 'Religion'
+    WHEN 'Y' THEN 'Mutual & Membership Benefit'
+    ELSE 'Other'
+  END AS sector,
+  ${alias}.ntee_code`
 
 const ALLOWED_SORT_COLUMNS = new Set([
   'total_revenue',
@@ -61,7 +95,14 @@ export async function GET(request: NextRequest) {
 
     // Non-search filters only touch orgs/filings columns directly
     if (state) clauses.push(`o.state = ${p(state)}`)
-    if (sector) clauses.push(`o.sector = ${p(sector)}`)
+    if (sector) {
+      const letters = SECTOR_TO_NTEE_LETTERS[sector] ?? []
+      if (sector === 'Other') {
+        clauses.push(`(o.ntee_code IS NULL OR o.ntee_code = '' OR LEFT(o.ntee_code, 1) = 'Z')`)
+      } else if (letters.length > 0) {
+        clauses.push(`LEFT(o.ntee_code, 1) = ANY(${p(letters)})`)
+      }
+    }
     if (yearMin !== null) clauses.push(`f.fiscal_year >= ${p(yearMin)}`)
     if (yearMax !== null) clauses.push(`f.fiscal_year <= ${p(yearMax)}`)
 
@@ -116,7 +157,7 @@ export async function GET(request: NextRequest) {
           f.*,
           o.name,
           o.state,
-          o.sector,
+          ${nteeSectorExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
           ${cohortSelect}
         FROM filings f
@@ -142,7 +183,7 @@ export async function GET(request: NextRequest) {
           r.*,
           o.name,
           o.state,
-          o.sector,
+          ${nteeSectorExpr('o')},
           (r.total_revenue - r.total_expenses) AS net_income,
           ${cohortId !== null
             ? `(SELECT name FROM cohorts WHERE id = ${cohortId})`
@@ -158,7 +199,7 @@ export async function GET(request: NextRequest) {
           f.*,
           o.name,
           o.state,
-          o.sector,
+          ${nteeSectorExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
           ${cohortSelect}
         FROM filings f

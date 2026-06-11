@@ -11,6 +11,7 @@ export const COLUMN_GROUPS = [
       { key: 'fiscal_year',    label: 'Year' },
       { key: 'form_type',      label: 'Form Type' },
       { key: 'filing_method',  label: 'Filing Method' },
+      { key: 'ntee_code',      label: 'NTEE Code' },
       { key: 'subsection_code', label: 'IRC Subsection' },
       { key: 'state',          label: 'State' },
       { key: 'sector',         label: 'Sector' },

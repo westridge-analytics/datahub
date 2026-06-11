@@ -131,6 +131,21 @@ describe('Filters', () => {
     assert.ok(json.data.every(r => r.state === 'WI'), 'non-WI row in state filter results')
   })
 
+  test('sector filter returns only matching NTEE category', async () => {
+    const json = await filings({ sector: 'Education' })
+    assert.ok(json.data.length > 0, 'no Education results')
+    assert.ok(json.data.every(r => r.sector === 'Education'), 'non-Education row in sector filter results')
+  })
+
+  test('sector field is NTEE-derived (no raw BMF values)', async () => {
+    const json = await filings({})
+    const knownNtee = ['Arts, Culture & Humanities','Education','Environment & Animals','Health',
+      'Human Services','International & Foreign Affairs','Public & Societal Benefit',
+      'Religion','Mutual & Membership Benefit','Other']
+    const bad = json.data.filter(r => r.sector && !knownNtee.includes(r.sector))
+    assert.equal(bad.length, 0, `unexpected sector values: ${[...new Set(bad.map(r => r.sector))].join(', ')}`)
+  })
+
   test('year_min filter works', async () => {
     const json = await filings({ year_min: '2022' })
     assert.ok(json.data.every(r => r.fiscal_year >= 2022), 'row before year_min found')

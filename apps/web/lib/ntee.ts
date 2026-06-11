@@ -33,6 +33,20 @@ export function nteeToSector(code: string | null): string {
   return NTEE_MAP[letter] ?? 'Other'
 }
 
+// Reverse map: sector label → NTEE first-letter codes (used for SQL filtering)
+export const SECTOR_TO_NTEE_LETTERS: Record<string, string[]> = {
+  'Arts, Culture & Humanities':   ['A'],
+  'Education':                    ['B'],
+  'Environment & Animals':        ['C', 'D'],
+  'Health':                       ['E', 'F', 'G', 'H'],
+  'Human Services':               ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'],
+  'International & Foreign Affairs': ['Q'],
+  'Public & Societal Benefit':    ['R', 'S', 'T', 'U', 'V', 'W'],
+  'Religion':                     ['X'],
+  'Mutual & Membership Benefit':  ['Y'],
+  'Other':                        ['Z'],
+}
+
 export const NTEE_SECTORS: string[] = [
   'Arts, Culture & Humanities',
   'Education',
