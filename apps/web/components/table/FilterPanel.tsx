@@ -222,6 +222,7 @@ export default function FilterPanel({ filters, cohorts, onChange, onClose }: Fil
   const [numPickerOpen, setNumPickerOpen] = useState(false)
   const numPickerRef = useRef<HTMLDivElement>(null)
   const numBtnRef = useRef<HTMLButtonElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const [numPickerPos, setNumPickerPos] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
@@ -246,6 +247,7 @@ export default function FilterPanel({ filters, cohorts, onChange, onClose }: Fil
     if (draft.ranges[colKey]) return
     setDraft(d => ({ ...d, ranges: { ...d.ranges, [colKey]: { min: '', max: '' } } }))
     setNumPickerOpen(false)
+    setTimeout(() => { bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' }) }, 0)
   }
 
   function removeRange(colKey: string) {
@@ -299,7 +301,7 @@ export default function FilterPanel({ filters, cohorts, onChange, onClose }: Fil
       </div>
 
       {/* Body */}
-      <div style={{ overflowY: 'auto', flex: 1 }}>
+      <div ref={bodyRef} style={{ overflowY: 'auto', flex: 1 }}>
 
         {/* Year */}
         <div style={sectionStyle}>
