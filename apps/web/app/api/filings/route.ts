@@ -173,14 +173,18 @@ export async function GET(request: NextRequest) {
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
 
     // cohortId already validated as integer — safe to inline
+    // Returns all cohort names for an EIN as a comma-separated string, or NULL if none.
+    const cohortNamesExpr = (einExpr: string) => cohortId !== null
+      ? `(SELECT name FROM cohorts WHERE id = ${cohortId}) AS cohort_names`
+      : `(SELECT string_agg(c.name, ', ' ORDER BY c.name)
+           FROM cohort_members cm2
+           JOIN cohorts c ON c.id = cm2.cohort_id
+           WHERE cm2.ein = ${einExpr}) AS cohort_names`
+
+    // cohortJoin only needed for the filter path (Path C) when cohortId is set
     const cohortJoin = cohortId !== null
       ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}`
-      : `LEFT JOIN cohort_members cm ON cm.ein = f.ein
-         LEFT JOIN cohorts coh ON coh.id = cm.cohort_id`
-
-    const cohortSelect = cohortId !== null
-      ? `(SELECT name FROM cohorts WHERE id = ${cohortId}) AS cohort_name`
-      : `coh.name AS cohort_name`
+      : ''
 
     const offset = (page - 1) * pageSize
     const hasFilters = !!search || clauses.length > 0 || cohortId !== null
@@ -224,11 +228,11 @@ export async function GET(request: NextRequest) {
           o.sector,
           ${nteeExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
-          ${cohortSelect}
+          ${cohortNamesExpr('f.ein')}
         FROM filings f
         JOIN matched_eins m ON m.ein = f.ein
         JOIN organizations o ON o.ein = f.ein
-        ${cohortId !== null ? cohortJoin : `LEFT JOIN cohort_members cm ON cm.ein = f.ein LEFT JOIN cohorts coh ON coh.id = cm.cohort_id`}
+        ${cohortJoin}
         WHERE TRUE ${extraWhere}
         ORDER BY ${orderExpr} ${sortDir} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
@@ -251,10 +255,7 @@ export async function GET(request: NextRequest) {
           o.sector,
           ${nteeExpr('o')},
           (r.total_revenue - r.total_expenses) AS net_income,
-          ${cohortId !== null
-            ? `(SELECT name FROM cohorts WHERE id = ${cohortId})`
-            : `(SELECT c.name FROM cohort_members cm2 JOIN cohorts c ON c.id = cm2.cohort_id WHERE cm2.ein = r.ein LIMIT 1)`
-          } AS cohort_name
+          ${cohortNamesExpr('r.ein')}
         FROM ranked r
         JOIN organizations o ON o.ein = r.ein
       `
@@ -268,7 +269,7 @@ export async function GET(request: NextRequest) {
           o.sector,
           ${nteeExpr('o')},
           (f.total_revenue - f.total_expenses) AS net_income,
-          ${cohortSelect}
+          ${cohortNamesExpr('f.ein')}
         FROM filings f
         JOIN organizations o ON o.ein = f.ein
         ${cohortJoin}

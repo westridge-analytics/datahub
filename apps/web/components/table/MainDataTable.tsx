@@ -172,10 +172,30 @@ function cellValue(
     case 'fiscal_year': return formatYear(row.tax_period)
     case 'state': return row.state ?? '—'
     case 'sector': return <span style={{ fontSize: '12px' }}>{row.sector ?? '—'}</span>
-    case 'cohort_name':
-      return row.cohort_name
-        ? <span style={{ color: '#6F99CC', fontWeight: 500, fontSize: '12px' }}>{row.cohort_name}</span>
-        : <span style={{ color: '#7A9AA4' }}>—</span>
+    case 'cohort_name': {
+      if (!row.cohort_names) return <span style={{ color: '#7A9AA4' }}>—</span>
+      const names = row.cohort_names.split(', ')
+      const visible = names.slice(0, 2)
+      const overflow = names.length - 2
+      return (
+        <span style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
+          {visible.map(n => (
+            <span key={n} style={{ color: '#6F99CC', fontWeight: 500, fontSize: '11px',
+              backgroundColor: '#EEF5FB', borderRadius: '3px', padding: '1px 5px',
+              whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              title={n}>
+              {n}
+            </span>
+          ))}
+          {overflow > 0 && (
+            <span title={names.slice(2).join(', ')}
+              style={{ fontSize: '10px', color: '#7A9AA4', whiteSpace: 'nowrap' }}>
+              +{overflow} more
+            </span>
+          )}
+        </span>
+      )
+    }
     case 'total_revenue': return formatCurrency(row.total_revenue, true)
     case 'total_expenses': return formatCurrency(row.total_expenses, true)
     case 'net_income': {

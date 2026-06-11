@@ -105,7 +105,7 @@ export interface FilingWithOrg extends Filing {
   sector: string | null
   ntee_category: string | null
   ntee_code: string | null
-  cohort_name: string | null
+  cohort_names: string | null
 }
 
 export interface Cohort {
