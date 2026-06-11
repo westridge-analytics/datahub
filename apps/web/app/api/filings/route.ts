@@ -92,24 +92,27 @@ export async function GET(request: NextRequest) {
     // Path C (org filters like state/sector): standard join with WHERE.
 
     let queryText: string
+    let searchParams: unknown[] = []  // separate param array for search path (reused by count)
 
     if (search) {
       const trimmed = search.trim()
-      const ftsPh  = p(trimmed)
-      const trgmPh = p(trimmed.toUpperCase())
-      const einPh  = p(`%${trimmed}%`)
-      // Additional non-search filters on filings/orgs
+      // Build a separate params array so search + count queries both use $1,$2,$3
+      // (passing a shared array with extra elements causes a Postgres bind error)
+      searchParams = [trimmed, trimmed.toUpperCase(), `%${trimmed}%`]
       const extraClauses = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
       const extraWhere = extraClauses.length > 0 ? `AND ${extraClauses.join(' AND ')}` : ''
 
-      queryText = `
+      const matchedEinsCTE = `
         WITH matched_eins AS MATERIALIZED (
           SELECT ein FROM organizations
-          WHERE name_vec @@ websearch_to_tsquery('english', ${ftsPh})
-             OR similarity(name, ${trgmPh}) > 0.4
+          WHERE name_vec @@ websearch_to_tsquery('english', $1)
+             OR similarity(name, $2) > 0.4
           UNION
-          SELECT ein FROM filings WHERE ein ILIKE ${einPh}
-        )
+          SELECT ein FROM filings WHERE ein ILIKE $3
+        )`
+
+      queryText = `
+        ${matchedEinsCTE}
         SELECT
           f.*,
           o.name,
@@ -173,20 +176,16 @@ export async function GET(request: NextRequest) {
     if (!hasFilters) {
       countText = `SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'filings'`
     } else if (search) {
-      const trimmed = search.trim()
-      // Reuse same param indices already pushed above for the main query
-      const ftsPh2  = p(trimmed)
-      const trgmPh2 = p(trimmed.toUpperCase())
-      const einPh2  = p(`%${trimmed}%`)
+      // Same $1,$2,$3 as the main query — searchParams array is passed to both
       const extraClauses2 = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
       const extraWhere2 = extraClauses2.length > 0 ? `AND ${extraClauses2.join(' AND ')}` : ''
       countText = `
         WITH matched_eins AS MATERIALIZED (
           SELECT ein FROM organizations
-          WHERE name_vec @@ websearch_to_tsquery('english', ${ftsPh2})
-             OR similarity(name, ${trgmPh2}) > 0.4
+          WHERE name_vec @@ websearch_to_tsquery('english', $1)
+             OR similarity(name, $2) > 0.4
           UNION
-          SELECT ein FROM filings WHERE ein ILIKE ${einPh2}
+          SELECT ein FROM filings WHERE ein ILIKE $3
         )
         SELECT COUNT(*) AS total
         FROM filings f
@@ -202,9 +201,11 @@ export async function GET(request: NextRequest) {
          ${whereClause}`
     }
 
+    // searchParams is isolated: count query uses same $1,$2,$3 as main query.
+    // Other paths share the same params array throughout.
     const [rows, countRows] = await Promise.all([
       rawQuery(queryText, params),
-      rawQuery(countText, hasFilters ? params : []),
+      rawQuery(countText, hasFilters ? (search ? searchParams : params) : []),
     ])
 
     const total = parseInt((countRows[0] as { total: string }).total, 10)
