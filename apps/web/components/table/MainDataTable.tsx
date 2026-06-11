@@ -61,25 +61,118 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 // ─── Column definitions ───────────────────────────────────────────────────────
 
 const ALL_COL_LABELS: Record<string, string> = {
+  // Identity
   ein: 'EIN',
   name: 'Organization',
   fiscal_year: 'Year',
+  form_type: 'Form Type',
+  filing_method: 'Filing Method',
+  subsection_code: 'IRC Subsection',
   state: 'State',
   sector: 'Sector',
   cohort_name: 'Cohort',
-  total_revenue: 'Revenue',
-  total_expenses: 'Expenses',
+  // Revenue
+  total_revenue: 'Total Revenue',
+  contributions: 'Contributions',
+  program_revenue: 'Program Revenue',
+  investment_income: 'Investment Income',
+  other_revenue: 'Other Revenue',
+  // Revenue components
+  royalties_income: 'Royalties Income',
+  net_rental_income: 'Net Rental Income',
+  net_asset_sale_gains: 'Net Asset Sale Gains',
+  net_fundraising_income: 'Net Fundraising Income',
+  net_gaming_income: 'Net Gaming Income',
+  // Expenses
+  total_expenses: 'Total Expenses',
+  program_expenses: 'Program Expenses',
+  ga_expenses: 'G&A Expenses',
+  fundraising_expenses: 'Fundraising Expenses',
+  // Compensation & payroll
+  comp_officers: 'Officer Compensation',
+  comp_other_salaries: 'Other Salaries',
+  comp_total_reported: 'Total Comp Reported',
+  comp_related_orgs: 'Comp via Related Orgs',
+  pension_contributions: 'Pension Contributions',
+  employee_benefits: 'Employee Benefits',
+  payroll_taxes: 'Payroll Taxes',
+  // Fees
+  management_fees: 'Management Fees',
+  legal_fees: 'Legal Fees',
+  accounting_fees: 'Accounting Fees',
+  professional_fundraising_fees: 'Professional Fundraising Fees',
+  // Operating
+  occupancy: 'Occupancy',
+  travel: 'Travel',
+  it_expenses: 'IT Expenses',
+  depreciation: 'Depreciation',
+  insurance: 'Insurance',
+  // Grants paid
+  grants_to_govts: 'Grants to Govts',
+  grants_to_individuals: 'Grants to Individuals',
+  grants_to_foreign: 'Grants to Foreign',
+  // Bottom line
   net_income: 'Net Income',
+  // Balance sheet
   total_assets: 'Total Assets',
-  total_net_assets: 'Net Assets',
-  total_liabilities: 'Liabilities',
-  cash_equiv: 'Cash & Equiv.',
+  total_liabilities: 'Total Liabilities',
+  total_net_assets: 'Total Net Assets',
+  unrestr_net_assets: 'Unrestricted Net Assets',
+  restr_net_assets: 'Restricted Net Assets',
+  temp_restricted_net_assets: 'Temp Restricted Net Assets',
+  perm_restricted_net_assets: 'Perm Restricted Net Assets',
+  pledges_receivable: 'Pledges Receivable',
+  accounts_payable: 'Accounts Payable',
+  tax_exempt_bonds_liability: 'Tax-Exempt Bonds',
+  // Investments
+  cash_equiv: 'Cash & Equivalents',
   st_investments: 'ST Investments',
+  lt_investments: 'LT Investments',
+  investments_publicly_traded: 'Publicly Traded Securities',
+  investments_other: 'Other Investments',
+  investments_program_related: 'Program-Related Investments',
+  ppe: 'PP&E',
+  // Headcount
+  num_employees: 'Employees',
+  num_highly_compensated: 'Individuals >$100K',
+  num_contractors_100k: 'Contractors >$100K',
+  // Governance
+  has_lobbying: 'Lobbying Activity',
+  has_political_activity: 'Political Activity',
+  has_unrelated_business_income: 'Unrelated Business Income',
+  has_foreign_office: 'Foreign Office',
+  has_foreign_grants: 'Foreign Grants',
+  operates_hospital: 'Operates Hospital',
+  operates_school: 'Operates School',
+  has_related_orgs: 'Related Organizations',
 }
 
 const SORTABLE = new Set(['total_revenue', 'total_expenses', 'net_income', 'total_assets', 'total_net_assets', 'fiscal_year', 'name'])
 
-const NUMERIC_COLS = new Set(['total_revenue', 'total_expenses', 'net_income', 'total_assets', 'total_net_assets', 'total_liabilities', 'cash_equiv', 'st_investments'])
+const NUMERIC_COLS = new Set([
+  'total_revenue', 'contributions', 'program_revenue', 'investment_income', 'other_revenue',
+  'royalties_income', 'net_rental_income', 'net_asset_sale_gains', 'net_fundraising_income', 'net_gaming_income',
+  'total_expenses', 'program_expenses', 'ga_expenses', 'fundraising_expenses',
+  'comp_officers', 'comp_other_salaries', 'comp_total_reported', 'comp_related_orgs',
+  'pension_contributions', 'employee_benefits', 'payroll_taxes',
+  'management_fees', 'legal_fees', 'accounting_fees', 'professional_fundraising_fees',
+  'occupancy', 'travel', 'it_expenses', 'depreciation', 'insurance',
+  'grants_to_govts', 'grants_to_individuals', 'grants_to_foreign',
+  'net_income',
+  'total_assets', 'total_liabilities', 'total_net_assets',
+  'unrestr_net_assets', 'restr_net_assets', 'temp_restricted_net_assets', 'perm_restricted_net_assets',
+  'pledges_receivable', 'accounts_payable', 'tax_exempt_bonds_liability',
+  'cash_equiv', 'st_investments', 'lt_investments',
+  'investments_publicly_traded', 'investments_other', 'investments_program_related',
+  'ppe',
+  'num_employees', 'num_highly_compensated', 'num_contractors_100k',
+])
+
+const BOOLEAN_COLS = new Set([
+  'has_lobbying', 'has_political_activity', 'has_unrelated_business_income',
+  'has_foreign_office', 'has_foreign_grants', 'operates_hospital',
+  'operates_school', 'has_related_orgs',
+])
 
 function cellValue(
   col: string,
@@ -106,12 +199,82 @@ function cellValue(
         </span>
       )
     }
-    case 'total_assets': return formatCurrency(row.total_assets, true)
-    case 'total_net_assets': return formatCurrency(row.total_net_assets, true)
-    case 'total_liabilities': return formatCurrency(row.total_liabilities, true)
-    case 'cash_equiv': return formatCurrency(row.cash_equiv, true)
+    case 'form_type':       return row.form_type ? <span style={{ fontSize: '11px', fontFamily: 'monospace' }}>{row.form_type}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
+    case 'filing_method':  return (row as any).filing_method ?? <span style={{ color: '#7A9AA4' }}>—</span>
+    case 'subsection_code': {
+      const sc = (row as any).subsection_code
+      return sc ? <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>{sc}</span> : <span style={{ color: '#7A9AA4' }}>—</span>
+    }
+    // Revenue
+    case 'contributions':     return formatCurrency((row as any).contributions, true)
+    case 'program_revenue':   return formatCurrency((row as any).program_revenue, true)
+    case 'investment_income': return formatCurrency((row as any).investment_income, true)
+    case 'other_revenue':     return formatCurrency((row as any).other_revenue, true)
+    case 'royalties_income':       return formatCurrency((row as any).royalties_income, true)
+    case 'net_rental_income':      return formatCurrency((row as any).net_rental_income, true)
+    case 'net_asset_sale_gains':   return formatCurrency((row as any).net_asset_sale_gains, true)
+    case 'net_fundraising_income': return formatCurrency((row as any).net_fundraising_income, true)
+    case 'net_gaming_income':      return formatCurrency((row as any).net_gaming_income, true)
+    // Expenses
+    case 'program_expenses':     return formatCurrency((row as any).program_expenses, true)
+    case 'ga_expenses':          return formatCurrency((row as any).ga_expenses, true)
+    case 'fundraising_expenses': return formatCurrency((row as any).fundraising_expenses, true)
+    // Compensation
+    case 'comp_officers':       return formatCurrency((row as any).comp_officers, true)
+    case 'comp_other_salaries': return formatCurrency((row as any).comp_other_salaries, true)
+    case 'comp_total_reported': return formatCurrency((row as any).comp_total_reported, true)
+    case 'comp_related_orgs':   return formatCurrency((row as any).comp_related_orgs, true)
+    case 'pension_contributions': return formatCurrency((row as any).pension_contributions, true)
+    case 'employee_benefits':   return formatCurrency((row as any).employee_benefits, true)
+    case 'payroll_taxes':       return formatCurrency((row as any).payroll_taxes, true)
+    // Fees
+    case 'management_fees':              return formatCurrency((row as any).management_fees, true)
+    case 'legal_fees':                   return formatCurrency((row as any).legal_fees, true)
+    case 'accounting_fees':              return formatCurrency((row as any).accounting_fees, true)
+    case 'professional_fundraising_fees': return formatCurrency((row as any).professional_fundraising_fees, true)
+    // Operating
+    case 'occupancy':    return formatCurrency((row as any).occupancy, true)
+    case 'travel':       return formatCurrency((row as any).travel, true)
+    case 'it_expenses':  return formatCurrency((row as any).it_expenses, true)
+    case 'depreciation': return formatCurrency((row as any).depreciation, true)
+    case 'insurance':    return formatCurrency((row as any).insurance, true)
+    // Grants paid
+    case 'grants_to_govts':       return formatCurrency((row as any).grants_to_govts, true)
+    case 'grants_to_individuals': return formatCurrency((row as any).grants_to_individuals, true)
+    case 'grants_to_foreign':     return formatCurrency((row as any).grants_to_foreign, true)
+    // Balance sheet
+    case 'total_assets':       return formatCurrency(row.total_assets, true)
+    case 'total_net_assets':   return formatCurrency(row.total_net_assets, true)
+    case 'total_liabilities':  return formatCurrency(row.total_liabilities, true)
+    case 'unrestr_net_assets': return formatCurrency((row as any).unrestr_net_assets, true)
+    case 'restr_net_assets':   return formatCurrency((row as any).restr_net_assets, true)
+    case 'temp_restricted_net_assets': return formatCurrency((row as any).temp_restricted_net_assets, true)
+    case 'perm_restricted_net_assets': return formatCurrency((row as any).perm_restricted_net_assets, true)
+    case 'pledges_receivable':         return formatCurrency((row as any).pledges_receivable, true)
+    case 'accounts_payable':           return formatCurrency((row as any).accounts_payable, true)
+    case 'tax_exempt_bonds_liability': return formatCurrency((row as any).tax_exempt_bonds_liability, true)
+    // Investments
+    case 'cash_equiv':     return formatCurrency(row.cash_equiv, true)
     case 'st_investments': return formatCurrency(row.st_investments, true)
-    default: return '—'
+    case 'lt_investments': return formatCurrency((row as any).lt_investments, true)
+    case 'investments_publicly_traded':  return formatCurrency((row as any).investments_publicly_traded, true)
+    case 'investments_other':            return formatCurrency((row as any).investments_other, true)
+    case 'investments_program_related':  return formatCurrency((row as any).investments_program_related, true)
+    case 'ppe':            return formatCurrency((row as any).ppe, true)
+    // Headcount
+    case 'num_employees':          return (row as any).num_employees != null ? ((row as any).num_employees as number).toLocaleString() : <span style={{ color: '#7A9AA4' }}>—</span>
+    case 'num_highly_compensated': return (row as any).num_highly_compensated != null ? ((row as any).num_highly_compensated as number).toLocaleString() : <span style={{ color: '#7A9AA4' }}>—</span>
+    case 'num_contractors_100k':   return (row as any).num_contractors_100k != null ? ((row as any).num_contractors_100k as number).toLocaleString() : <span style={{ color: '#7A9AA4' }}>—</span>
+    // Governance booleans
+    default: {
+      if (BOOLEAN_COLS.has(col)) {
+        const val = (row as any)[col]
+        if (val === true)  return <span style={{ color: '#2D7A4F', fontWeight: 600, fontSize: '11px' }}>Yes</span>
+        if (val === false) return <span style={{ color: '#7A9AA4', fontSize: '11px' }}>No</span>
+        return <span style={{ color: '#7A9AA4' }}>—</span>
+      }
+      return <span style={{ color: '#7A9AA4' }}>—</span>
+    }
   }
 }
 

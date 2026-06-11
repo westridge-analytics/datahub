@@ -1,17 +1,22 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import Sidebar from '@/components/layout/Sidebar';
+import SessionProvider from '@/components/SessionProvider';
+import { auth } from '@/auth';
 
 export const metadata: Metadata = {
   title: '990 Research',
   description: 'IRS Form 990 data research and analysis platform',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const session = await auth()
+  const showShell = !!session
+
   return (
     <html lang="en" style={{ height: '100%' }}>
       <body
@@ -25,10 +30,11 @@ export default function RootLayout({
           color: '#10232B',
         }}
       >
-        <Sidebar />
+        <SessionProvider>
+        {showShell && <Sidebar />}
         <main
           style={{
-            marginLeft: '220px',
+            marginLeft: showShell ? '220px' : '0',
             flex: 1,
             height: '100vh',
             display: 'flex',
@@ -40,6 +46,7 @@ export default function RootLayout({
         >
           {children}
         </main>
+        </SessionProvider>
       </body>
     </html>
   );

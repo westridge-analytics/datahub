@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut, useSession } from 'next-auth/react';
 
 const NAV_ITEMS = [
   {
@@ -61,10 +62,21 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    label: 'Users',
+    href: '/admin/users',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <circle cx="8" cy="5" r="3" opacity="0.85" />
+        <path d="M2 13c0-3 2.7-5 6-5s6 2 6 5H2z" opacity="0.85" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
 
   return (
     <aside
@@ -160,13 +172,38 @@ export default function Sidebar() {
       {/* Footer */}
       <div
         style={{
-          padding: '12px 16px',
+          padding: '10px 16px',
           borderTop: '1px solid rgba(122,174,187,0.2)',
-          fontSize: '11px',
-          color: 'rgba(122,174,187,0.6)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
         }}
       >
-        IRS SOI · FY 2010–2023
+        {session?.user?.email && (
+          <div style={{ fontSize: '11px', color: 'rgba(122,174,187,0.8)', overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {session.user.email}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '10px', color: 'rgba(122,174,187,0.5)' }}>
+            IRS SOI · FY 2010–2023
+          </span>
+          <button
+            onClick={() => signOut({ callbackUrl: '/login' })}
+            style={{
+              fontSize: '10px',
+              color: 'rgba(122,174,187,0.7)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '2px 0',
+              textDecoration: 'underline',
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </aside>
   );
