@@ -59,23 +59,7 @@ export async function GET(request: NextRequest) {
       return `$${params.length}`
     }
 
-    if (search) {
-      const trimmed = search.trim()
-      // Primary: Postgres full-text search via websearch_to_tsquery.
-      //   - All words must match (AND), word-order-independent, handles plurals/stemming.
-      //   - Uses GIN index on name_vec (tsvector generated column).
-      // Fuzzy fallback: trigram similarity for short queries or misspellings
-      //   that FTS misses (e.g. single misspelled word).
-      // EIN: plain ILIKE substring match.
-      const ftsPh  = p(trimmed)
-      const trgmPh = p(trimmed.toUpperCase())
-      const einPh  = p(`%${trimmed}%`)
-      clauses.push(
-        `(o.name_vec @@ websearch_to_tsquery('english', ${ftsPh})` +
-        ` OR similarity(o.name, ${trgmPh}) > 0.4` +
-        ` OR f.ein ILIKE ${einPh})`
-      )
-    }
+    // Non-search filters only touch orgs/filings columns directly
     if (state) clauses.push(`o.state = ${p(state)}`)
     if (sector) clauses.push(`o.sector = ${p(sector)}`)
     if (yearMin !== null) clauses.push(`f.fiscal_year >= ${p(yearMin)}`)
@@ -94,17 +78,57 @@ export async function GET(request: NextRequest) {
       : `coh.name AS cohort_name`
 
     const offset = (page - 1) * pageSize
-    const hasFilters = clauses.length > 0 || cohortId !== null
+    const hasFilters = !!search || clauses.length > 0 || cohortId !== null
 
-    // When filters only touch filings columns (no search/state/sector that need the org
-    // join before filtering), sort filings first in a materialized CTE then join orgs.
-    // This lets Postgres use the (sort_col, ein) index instead of a full hash join.
-    const orgFilterOnly = !search && !state && !sector && sortBy !== 'name' && cohortId === null
-    const filingsClauses = clauses.filter(c => !c.includes('o.'))
-    const filingsWhere = filingsClauses.length > 0 ? `WHERE ${filingsClauses.join(' AND ')}` : ''
+    // ── Query path selection ──────────────────────────────────────────────────
+    //
+    // Path A (search): resolve matching EINs from organizations first using
+    //   FTS + trigram indexes, then join filings against that small set.
+    //   Avoids pushing name conditions into a 6M-row filings scan.
+    //
+    // Path B (no search, no org filters): sort filings by index first in a
+    //   materialized CTE, then join orgs. Avoids full hash join.
+    //
+    // Path C (org filters like state/sector): standard join with WHERE.
 
-    const queryText = orgFilterOnly
-      ? `
+    let queryText: string
+
+    if (search) {
+      const trimmed = search.trim()
+      const ftsPh  = p(trimmed)
+      const trgmPh = p(trimmed.toUpperCase())
+      const einPh  = p(`%${trimmed}%`)
+      // Additional non-search filters on filings/orgs
+      const extraClauses = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+      const extraWhere = extraClauses.length > 0 ? `AND ${extraClauses.join(' AND ')}` : ''
+
+      queryText = `
+        WITH matched_eins AS MATERIALIZED (
+          SELECT ein FROM organizations
+          WHERE name_vec @@ websearch_to_tsquery('english', ${ftsPh})
+             OR similarity(name, ${trgmPh}) > 0.4
+          UNION
+          SELECT ein FROM filings WHERE ein ILIKE ${einPh}
+        )
+        SELECT
+          f.*,
+          o.name,
+          o.state,
+          o.sector,
+          (f.total_revenue - f.total_expenses) AS net_income,
+          ${cohortSelect}
+        FROM filings f
+        JOIN matched_eins m ON m.ein = f.ein
+        JOIN organizations o ON o.ein = f.ein
+        ${cohortId !== null ? cohortJoin : `LEFT JOIN cohort_members cm ON cm.ein = f.ein LEFT JOIN cohorts coh ON coh.id = cm.cohort_id`}
+        WHERE TRUE ${extraWhere}
+        ORDER BY ${orderExpr} ${sortDir} NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}
+      `
+    } else if (!state && !sector && sortBy !== 'name' && cohortId === null) {
+      // Path B: sort-then-join via materialized CTE (fast index scan)
+      const filingsClauses = clauses.filter(c => !c.includes('o.'))
+      queryText = `
         WITH ranked AS MATERIALIZED (
           SELECT * FROM filings f
           WHERE EXISTS (SELECT 1 FROM organizations o WHERE o.ein = f.ein)
@@ -125,7 +149,9 @@ export async function GET(request: NextRequest) {
         FROM ranked r
         JOIN organizations o ON o.ein = r.ein
       `
-      : `
+    } else {
+      // Path C: standard join
+      queryText = `
         SELECT
           f.*,
           o.name,
@@ -140,16 +166,41 @@ export async function GET(request: NextRequest) {
         ORDER BY ${orderExpr} ${sortDir} NULLS LAST
         LIMIT ${pageSize} OFFSET ${offset}
       `
+    }
 
-    // Use fast stats estimate when no filters are applied; exact count otherwise.
-    const countText = hasFilters
-      ? `SELECT COUNT(*) AS total
+    // Use fast stats estimate when no filters; for search use matched_eins CTE; else exact count.
+    let countText: string
+    if (!hasFilters) {
+      countText = `SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'filings'`
+    } else if (search) {
+      const trimmed = search.trim()
+      // Reuse same param indices already pushed above for the main query
+      const ftsPh2  = p(trimmed)
+      const trgmPh2 = p(trimmed.toUpperCase())
+      const einPh2  = p(`%${trimmed}%`)
+      const extraClauses2 = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+      const extraWhere2 = extraClauses2.length > 0 ? `AND ${extraClauses2.join(' AND ')}` : ''
+      countText = `
+        WITH matched_eins AS MATERIALIZED (
+          SELECT ein FROM organizations
+          WHERE name_vec @@ websearch_to_tsquery('english', ${ftsPh2})
+             OR similarity(name, ${trgmPh2}) > 0.4
+          UNION
+          SELECT ein FROM filings WHERE ein ILIKE ${einPh2}
+        )
+        SELECT COUNT(*) AS total
+        FROM filings f
+        JOIN matched_eins m ON m.ein = f.ein
+        JOIN organizations o ON o.ein = f.ein
+        WHERE TRUE ${extraWhere2}
+      `
+    } else {
+      countText = `SELECT COUNT(*) AS total
          FROM filings f
          JOIN organizations o ON o.ein = f.ein
          ${cohortId !== null ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}` : ''}
          ${whereClause}`
-      : `SELECT reltuples::bigint AS total
-         FROM pg_class WHERE relname = 'filings'`
+    }
 
     const [rows, countRows] = await Promise.all([
       rawQuery(queryText, params),

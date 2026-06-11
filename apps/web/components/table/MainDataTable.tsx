@@ -163,7 +163,8 @@ export default function MainDataTable() {
     return () => clearTimeout(t)
   }, [search])
 
-  // Fetch data — AbortController cancels in-flight requests on re-trigger
+  // Fetch data — AbortController cancels in-flight requests on re-trigger.
+  // Guard: don't call setLoading(false) if this fetch was aborted (a newer one took over).
   useEffect(() => {
     const controller = new AbortController()
     const params = buildParams({ search: debouncedSearch, filters, sortBy, sortDir, page, pageSize })
@@ -175,7 +176,7 @@ export default function MainDataTable() {
         setTotal(json.total ?? 0)
       })
       .catch((err) => { if (err.name !== 'AbortError') console.error(err) })
-      .finally(() => setLoading(false))
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [debouncedSearch, filters, sortBy, sortDir, page])
 
