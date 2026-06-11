@@ -474,7 +474,7 @@ export default function MainDataTable() {
       const colLabel = allCols.find(c => c.key === col)?.label ?? col
       const rangeStr = [min !== undefined ? `≥ ${min.toLocaleString()}` : '', max !== undefined ? `≤ ${max.toLocaleString()}` : ''].filter(Boolean).join(' ')
       activeFilterChips.push({ label: colLabel, value: rangeStr,
-        onRemove: () => { setFilters(f => { const n = { ...f, ranges: { ...f.ranges } }; delete n.ranges![col]; if (!Object.keys(n.ranges!).length) delete n.ranges; return n }); setPage(1) } })
+        onRemove: () => { setFilters(f => { const nr = { ...f.ranges }; delete nr[col]; return { ...f, ranges: Object.keys(nr).length ? nr : undefined } }); setPage(1) } })
     }
   }
 
