@@ -4,21 +4,27 @@ import { useEffect, useRef, useState } from 'react'
 
 export const COLUMN_GROUPS = [
   {
-    label: 'Identity',
+    label: 'Required',
     columns: [
-      { key: 'ein',            label: 'EIN' },
-      { key: 'name',           label: 'Organization' },
-      { key: 'fiscal_year',    label: 'Year' },
-      { key: 'form_type',      label: 'Form Type' },
-      { key: 'filing_method',  label: 'Filing Method' },
-      { key: 'ntee_category',  label: 'NTEE Category' },
-      { key: 'ntee_code',      label: 'NTEE Code' },
-      { key: 'subsection_code', label: 'IRC Subsection' },
-      { key: 'state',          label: 'State' },
-      { key: 'sector',         label: 'Sector (BMF)' },
-      { key: 'cohort_name',    label: 'Cohort' },
+      { key: 'ein',         label: 'EIN' },
+      { key: 'name',        label: 'Organization' },
+      { key: 'fiscal_year', label: 'Year' },
     ],
     alwaysVisible: true,
+  },
+  {
+    label: 'Identity',
+    columns: [
+      { key: 'state',          label: 'State' },
+      { key: 'ntee_category',  label: 'NTEE Category' },
+      { key: 'ntee_code',      label: 'NTEE Code' },
+      { key: 'sector',         label: 'Sector (BMF)' },
+      { key: 'cohort_name',    label: 'Cohort' },
+      { key: 'form_type',      label: 'Form Type' },
+      { key: 'filing_method',  label: 'Filing Method' },
+      { key: 'subsection_code', label: 'IRC Subsection' },
+    ],
+    alwaysVisible: false,
   },
   {
     label: 'Revenue',
@@ -157,7 +163,7 @@ export const COLUMN_GROUPS = [
 ]
 
 export const DEFAULT_VISIBLE_COLUMNS = [
-  'ein', 'name', 'fiscal_year', 'state', 'sector', 'cohort_name',
+  'ein', 'name', 'fiscal_year', 'state', 'ntee_category', 'cohort_name',
   'total_revenue', 'total_expenses', 'net_income',
   'total_assets', 'total_net_assets',
 ]
