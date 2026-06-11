@@ -221,6 +221,8 @@ export default function FilterPanel({ filters, cohorts, onChange, onClose }: Fil
   const [fmOptions, setFmOptions]         = useState<string[]>([])
   const [numPickerOpen, setNumPickerOpen] = useState(false)
   const numPickerRef = useRef<HTMLDivElement>(null)
+  const numBtnRef = useRef<HTMLButtonElement>(null)
+  const [numPickerPos, setNumPickerPos] = useState<{ top: number; left: number } | null>(null)
 
   useEffect(() => {
     fetch('/api/filter-options?column=state').then(r => r.json()).then(d => setStateOptions(d.values ?? []))
@@ -394,16 +396,27 @@ export default function FilterPanel({ filters, cohorts, onChange, onClose }: Fil
 
           {/* Add numeric filter picker */}
           {availableNumericCols.length > 0 && (
-            <div style={{ position: 'relative' }} ref={numPickerRef}>
-              <button onClick={() => setNumPickerOpen(o => !o)}
+            <div ref={numPickerRef}>
+              <button
+                ref={numBtnRef}
+                onClick={() => {
+                  if (!numPickerOpen && numBtnRef.current) {
+                    const r = numBtnRef.current.getBoundingClientRect()
+                    setNumPickerPos({ top: r.top, left: r.left })
+                  }
+                  setNumPickerOpen(o => !o)
+                }}
                 style={{ fontSize: '11px', color: '#6F99CC', background: 'none', border: '1px dashed #BDD3DC',
                   borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
                 + Add numeric filter
               </button>
-              {numPickerOpen && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '2px',
+              {numPickerOpen && numPickerPos && (
+                <div style={{ position: 'fixed',
+                  top: numPickerPos.top - 4,
+                  left: numPickerPos.left,
+                  transform: 'translateY(-100%)',
                   backgroundColor: '#FFFFFF', border: '1px solid #BDD3DC', borderRadius: '6px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 60,
+                  boxShadow: '0 -4px 12px rgba(0,0,0,0.1)', zIndex: 200,
                   maxHeight: '220px', overflowY: 'auto', minWidth: '220px' }}>
                   {NUMERIC_GROUPS.map(g => {
                     const available = g.columns.filter(c => !addedRangeKeys.has(c.key))
