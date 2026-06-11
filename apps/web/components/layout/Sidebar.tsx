@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 
 const NAV_ITEMS = [
@@ -76,7 +76,14 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
+
+  async function handleSignOut() {
+    await signOut({ redirect: false })
+    router.push('/login')
+    router.refresh()
+  }
 
   return (
     <aside
@@ -190,7 +197,7 @@ export default function Sidebar() {
             IRS SOI · FY 2010–2023
           </span>
           <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={handleSignOut}
             style={{
               fontSize: '10px',
               color: 'rgba(122,174,187,0.7)',

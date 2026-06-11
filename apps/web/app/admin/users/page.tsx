@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
 
@@ -35,6 +35,12 @@ export default function UsersPage() {
   const [pwValue, setPwValue]     = useState('')
   const [pwLoading, setPwLoading] = useState(false)
   const [pwError, setPwError]     = useState('')
+
+  async function handleSignOut() {
+    await signOut({ redirect: false })
+    router.push('/login')
+    router.refresh()
+  }
 
   async function load() {
     setLoading(true)
@@ -122,7 +128,7 @@ export default function UsersPage() {
           User Management
         </h1>
         <div style={{ flex: 1 }} />
-        <button onClick={() => signOut({ callbackUrl: '/login' })} style={btnSecondary}>
+        <button onClick={handleSignOut} style={btnSecondary}>
           Sign out
         </button>
         <button onClick={() => { setAddOpen(true); setAddError('') }} style={btnPrimary}>

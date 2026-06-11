@@ -30,7 +30,7 @@ export default async function RootLayout({
           color: '#10232B',
         }}
       >
-        <SessionProvider>
+        <SessionProvider session={session}>
         {showShell && <Sidebar />}
         <main
           style={{
