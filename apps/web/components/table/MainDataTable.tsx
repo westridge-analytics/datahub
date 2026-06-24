@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import type { FilingWithOrg, Cohort } from '@/types'
 import { formatCurrency, formatEIN, formatYear } from '@/lib/format'
 import FilterChip from './FilterChip'
@@ -288,18 +288,80 @@ function cellValue(
   }
 }
 
+// ─── URL state helpers ────────────────────────────────────────────────────────
+
+const NUMERIC_COLS_API = new Set([
+  'total_revenue','total_expenses','total_assets','total_liabilities','total_net_assets',
+  'contributions','program_revenue','investment_income','other_revenue',
+  'royalties_income','net_rental_income','net_asset_sale_gains','net_fundraising_income','net_gaming_income',
+  'program_expenses','ga_expenses','fundraising_expenses',
+  'comp_officers','comp_other_salaries','comp_total_reported','comp_related_orgs',
+  'pension_contributions','employee_benefits','payroll_taxes',
+  'management_fees','legal_fees','accounting_fees','professional_fundraising_fees',
+  'occupancy','travel','it_expenses','depreciation','insurance',
+  'grants_to_govts','grants_to_individuals','grants_to_foreign',
+  'unrestr_net_assets','restr_net_assets','temp_restricted_net_assets','perm_restricted_net_assets',
+  'pledges_receivable','accounts_payable','tax_exempt_bonds_liability',
+  'cash_equiv','st_investments','lt_investments',
+  'investments_publicly_traded','investments_other','investments_program_related','ppe',
+  'num_employees','num_highly_compensated','num_contractors_100k',
+])
+
+const BOOL_GOV_COLS_SET = new Set([
+  'has_lobbying','has_political_activity','has_unrelated_business_income',
+  'has_foreign_office','has_foreign_grants','operates_hospital','operates_school','has_related_orgs',
+])
+
+function paramsToFilters(sp: URLSearchParams): Filters {
+  const f: Filters = {}
+  const state = sp.get('state')
+  if (state) f.state = state.split(',').filter(Boolean)
+  const ntee = sp.get('ntee_category')
+  if (ntee) f.ntee_category = ntee.split(',').filter(Boolean)
+  const ft = sp.get('form_type')
+  if (ft) f.form_type = ft.split(',').filter(Boolean)
+  const fm = sp.get('filing_method')
+  if (fm) f.filing_method = fm.split(',').filter(Boolean)
+  const cohort = sp.get('cohort_id')
+  if (cohort) f.cohort_id = parseInt(cohort, 10)
+  const yrMin = sp.get('year_min')
+  if (yrMin) f.year_min = parseInt(yrMin, 10)
+  const yrMax = sp.get('year_max')
+  if (yrMax) f.year_max = parseInt(yrMax, 10)
+  for (const k of BOOL_GOV_COLS_SET) {
+    const v = sp.get(k)
+    if (v !== null) (f as Record<string, unknown>)[k] = v === 'true'
+  }
+  const ranges: Record<string, { min?: number; max?: number }> = {}
+  for (const col of NUMERIC_COLS_API) {
+    const minVal = sp.get(`${col}_min`)
+    const maxVal = sp.get(`${col}_max`)
+    if (minVal !== null || maxVal !== null) {
+      ranges[col] = {}
+      if (minVal !== null) ranges[col].min = parseFloat(minVal)
+      if (maxVal !== null) ranges[col].max = parseFloat(maxVal)
+    }
+  }
+  if (Object.keys(ranges).length) f.ranges = ranges
+  return f
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function MainDataTable() {
   const router = useRouter()
+  const searchParams = useSearchParams()
 
-  // State
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [filters, setFilters] = useState<Filters>({})
-  const [sortBy, setSortBy] = useState('total_revenue')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [page, setPage] = useState(1)
+  // Initialize state from URL on first render
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '')
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get('q') ?? '')
+  const [filters, setFilters] = useState<Filters>(() => paramsToFilters(searchParams))
+  const [sortBy, setSortBy] = useState(() => searchParams.get('sort_by') ?? 'total_revenue')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => (searchParams.get('sort_dir') === 'asc' ? 'asc' : 'desc'))
+  const [page, setPage] = useState(() => {
+    const p = searchParams.get('page')
+    return p ? Math.max(1, parseInt(p, 10)) : 1
+  })
   const pageSize = 100
 
   const [rows, setRows] = useState<(FilingWithOrg & { net_income?: number | null })[]>([])
@@ -309,7 +371,13 @@ export default function MainDataTable() {
   const [selectedEins, setSelectedEins] = useState<Set<string>>(new Set())
   const [allFilteredSelected, setAllFilteredSelected] = useState(false)
   const [selectingAll, setSelectingAll] = useState(false)
-  const [visibleColumns, setVisibleColumns] = useState<string[]>(DEFAULT_VISIBLE_COLUMNS)
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
+    const cols = searchParams.get('cols')
+    return cols ? cols.split(',').filter(Boolean) : DEFAULT_VISIBLE_COLUMNS
+  })
+
+  // Track whether the component has mounted so we don't push URL on first render
+  const mounted = useRef(false)
 
   // Dropdowns
   const [filterOpen, setFilterOpen] = useState(false)
@@ -328,6 +396,25 @@ export default function MainDataTable() {
     }, 300)
     return () => clearTimeout(t)
   }, [search])
+
+  // Sync state to URL — runs after every relevant state change, but skips the initial render
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    const p = new URLSearchParams()
+    if (debouncedSearch) p.set('q', debouncedSearch)
+    if (sortBy !== 'total_revenue') p.set('sort_by', sortBy)
+    if (sortDir !== 'desc') p.set('sort_dir', sortDir)
+    if (page !== 1) p.set('page', String(page))
+    const colsDefault = JSON.stringify([...DEFAULT_VISIBLE_COLUMNS].sort())
+    const colsCurrent = JSON.stringify([...visibleColumns].sort())
+    if (colsCurrent !== colsDefault) p.set('cols', visibleColumns.join(','))
+    for (const [k, v] of Object.entries(buildFilterParams(filters))) p.set(k, v)
+    const qs = p.toString()
+    router.replace(qs ? `?${qs}` : '?', { scroll: false })
+  }, [debouncedSearch, filters, sortBy, sortDir, page, visibleColumns])
 
   // Fetch data — AbortController cancels in-flight requests on re-trigger.
   // Guard: don't call setLoading(false) if this fetch was aborted (a newer one took over).

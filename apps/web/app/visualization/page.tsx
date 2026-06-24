@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import PageHeader from '@/components/layout/PageHeader'
 
@@ -18,10 +19,33 @@ const TABS: { id: Tab; label: string }[] = [
 
 const YEAR_OPTIONS = Array.from({ length: 14 }, (_, i) => 2010 + i)
 
-export default function VisualizationPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('trend')
-  const [yearMin, setYearMin] = useState(2015)
-  const [yearMax, setYearMax] = useState(2023)
+function VisualizationPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const mounted = useRef(false)
+
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const t = searchParams.get('tab')
+    return (t === 'trend' || t === 'volatility' || t === 'growth') ? t : 'trend'
+  })
+  const [yearMin, setYearMin] = useState<number>(() => {
+    const v = searchParams.get('year_min')
+    return v ? parseInt(v, 10) : 2015
+  })
+  const [yearMax, setYearMax] = useState<number>(() => {
+    const v = searchParams.get('year_max')
+    return v ? parseInt(v, 10) : 2023
+  })
+
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    const p = new URLSearchParams()
+    if (activeTab !== 'trend') p.set('tab', activeTab)
+    if (yearMin !== 2015) p.set('year_min', String(yearMin))
+    if (yearMax !== 2023) p.set('year_max', String(yearMax))
+    const qs = p.toString()
+    router.replace(qs ? `?${qs}` : '?', { scroll: false })
+  }, [activeTab, yearMin, yearMax])
 
   const periodControls = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -123,5 +147,14 @@ export default function VisualizationPage() {
         {activeTab === 'growth' && <GrowthChart yearMin={yearMin} yearMax={yearMax} />}
       </div>
     </div>
+  )
+}
+
+import { Suspense } from 'react'
+export default function VisualizationPage() {
+  return (
+    <Suspense>
+      <VisualizationPageInner />
+    </Suspense>
   )
 }

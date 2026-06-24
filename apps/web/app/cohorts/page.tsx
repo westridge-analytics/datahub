@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import PageHeader from '@/components/layout/PageHeader'
 import type { Cohort, CohortMember, Organization } from '@/types'
 
@@ -14,7 +15,12 @@ interface CohortMemberWithOrg extends CohortMember {
   state?: string
 }
 
-export default function CohortsPage() {
+function CohortsPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialCohortIdParam = searchParams.get('cohort')
+  const initialCohortId = useRef<number | null>(initialCohortIdParam ? parseInt(initialCohortIdParam, 10) : null)
+
   const [cohorts, setCohorts] = useState<CohortWithCount[]>([])
   const [selectedCohort, setSelectedCohort] = useState<CohortWithCount | null>(null)
   const [members, setMembers] = useState<CohortMemberWithOrg[]>([])
@@ -49,7 +55,7 @@ export default function CohortsPage() {
   const [editingDescription, setEditingDescription] = useState(false)
   const [descriptionValue, setDescriptionValue] = useState('')
 
-  // Load cohorts
+  // Load cohorts — auto-select from URL param after load
   useEffect(() => {
     async function load() {
       setLoadingCohorts(true)
@@ -58,6 +64,13 @@ export default function CohortsPage() {
         if (res.ok) {
           const data: CohortWithCount[] = await res.json()
           setCohorts(data)
+          if (initialCohortId.current !== null) {
+            const match = data.find((c) => c.id === initialCohortId.current)
+            if (match) {
+              setSelectedCohort(match)
+              loadMembers(match.id)
+            }
+          }
         }
       } finally {
         setLoadingCohorts(false)
@@ -111,6 +124,7 @@ export default function CohortsPage() {
     setMemberSearch('')
     setShowMemberDropdown(false)
     loadMembers(cohort.id)
+    router.replace(`?cohort=${cohort.id}`, { scroll: false })
   }
 
   // Member search typeahead
@@ -781,5 +795,13 @@ export default function CohortsPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function CohortsPage() {
+  return (
+    <Suspense>
+      <CohortsPageInner />
+    </Suspense>
   )
 }
