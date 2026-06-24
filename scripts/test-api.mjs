@@ -150,6 +150,12 @@ describe('Filters', () => {
     const json = await filings({ year_min: '2022' })
     assert.ok(json.data.every(r => r.fiscal_year >= 2022), 'row before year_min found')
   })
+
+  test('search + ntee_category filter both apply (not silently ignored)', async () => {
+    const json = await filings({ search: 'children', ntee_category: 'Health' })
+    assert.ok(json.data.length > 0, 'no results for search+filter combo')
+    assert.ok(json.data.every(r => r.ntee_category === 'Health'), 'non-Health row returned when filter active with search')
+  })
 })
 
 describe('Pagination', () => {

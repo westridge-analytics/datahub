@@ -207,10 +207,13 @@ export async function GET(request: NextRequest) {
 
     if (search) {
       const trimmed = search.trim()
-      // Build a separate params array so search + count queries both use $1,$2
-      // (passing a shared array with extra elements causes a Postgres bind error)
-      searchParams = [trimmed, `%${trimmed}%`]
-      const extraClauses = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+      // $1 = search term, $2 = %ein-pattern%. Filter clauses were built against `params`
+      // ($1, $2, …) so we shift their indices by +2 and append params to searchParams
+      // so all filter values are actually passed to the query.
+      const extraClauses = clauses
+        .filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+        .map(c => c.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n, 10) + 2}`))
+      searchParams = [trimmed, `%${trimmed}%`, ...params]
       const extraWhere = extraClauses.length > 0 ? `AND ${extraClauses.join(' AND ')}` : ''
 
       const matchedEinsCTE = `
@@ -286,8 +289,10 @@ export async function GET(request: NextRequest) {
     if (!hasFilters) {
       countText = `SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'filings'`
     } else if (search) {
-      // Same $1,$2,$3 as the main query — searchParams array is passed to both
-      const extraClauses2 = clauses.filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+      // searchParams is already [term, %term%, ...params] — shift filter clause indices by +2
+      const extraClauses2 = clauses
+        .filter(c => !c.includes('o.name') && !c.includes('f.ein'))
+        .map(c => c.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n, 10) + 2}`))
       const extraWhere2 = extraClauses2.length > 0 ? `AND ${extraClauses2.join(' AND ')}` : ''
       countText = `
         WITH matched_eins AS MATERIALIZED (
