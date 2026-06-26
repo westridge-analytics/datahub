@@ -55,7 +55,11 @@ export interface Filing {
   comp_officers: number | null
   comp_disqualified: number | null
   comp_employees: number | null
+  comp_other_salaries: number | null
   comp_contractors: number | null
+  pension_contributions: number | null
+  employee_benefits: number | null
+  payroll_taxes: number | null
   fees_mgmt: number | null
   fees_legal: number | null
   fees_accounting: number | null
@@ -67,6 +71,11 @@ export interface Filing {
   office_expenses: number | null
   it_expenses: number | null
   royalties: number | null
+  royalties_income: number | null
+  net_rental_income: number | null
+  net_asset_sale_gains: number | null
+  net_fundraising_income: number | null
+  net_gaming_income: number | null
   occupancy: number | null
   travel: number | null
   entertainment: number | null
@@ -92,11 +101,14 @@ export interface Filing {
   grants_payable: number | null
   deferred_revenue: number | null
   tax_exempt_bonds: number | null
+  tax_exempt_bonds_liability: number | null
   escrow_liabilities: number | null
   loans_officers: number | null
   other_liabilities: number | null
   capital_stock: number | null
   retained_earnings: number | null
+  temp_restricted_net_assets: number | null
+  perm_restricted_net_assets: number | null
 }
 
 export interface FilingWithOrg extends Filing {

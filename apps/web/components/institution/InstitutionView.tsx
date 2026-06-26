@@ -15,6 +15,18 @@ import {
 import type { Organization, Filing } from '@/types'
 import { formatCurrency, formatEIN, formatPercent } from '@/lib/format'
 import { calcAllMethods, getMethodConfidence } from '@/lib/metrics/unrestricted-cash'
+import {
+  calcMonthlyOpex,
+  calcReserveCoverage,
+  calcPersonnelPct,
+  calcEarned,
+  calcContributed,
+  calcYoYRestrictionChange,
+  calcEstUnrestrictedContrib,
+  calcUnrestrictedOpIncome,
+  calcEarnedPct,
+  calcContribPct,
+} from '@/lib/metrics/custom-metrics'
 
 // ─── Color tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -44,9 +56,9 @@ interface FilingWithReconciliation extends Filing {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function confidenceColor(conf: 'High' | 'Medium' | 'Estimated') {
+function confidenceColor(conf: 'Low' | 'Midpoint' | 'High') {
   if (conf === 'High') return { bg: '#D4ECD9', text: '#1A5C2A', border: '#8FCB9B' }
-  if (conf === 'Medium') return { bg: '#FEF3C7', text: '#92400E', border: '#F59E0B' }
+  if (conf === 'Midpoint') return { bg: '#FEF3C7', text: '#92400E', border: '#F59E0B' }
   return { bg: '#F3F4F6', text: '#4B5563', border: '#D1D5DB' }
 }
 
@@ -178,16 +190,18 @@ function FinRow({
   label,
   ref: refLabel,
   value,
+  formatted: formattedOverride,
   isTotal,
   isNegativeRed,
 }: {
   label: string
   ref?: string
   value: number | null
+  formatted?: string
   isTotal?: boolean
   isNegativeRed?: boolean
 }) {
-  const formatted = value === null ? '—' : formatCurrency(value)
+  const formatted = formattedOverride ?? (value === null ? '—' : formatCurrency(value))
   const negative = isNegativeRed && value !== null && value < 0
 
   return (
@@ -263,10 +277,27 @@ export default function InstitutionView({
     : { m1: null, m2: null, m3: null }
 
   const methodDefs = [
-    { key: 'M1' as const, label: 'M1', formula: 'Cash × Unrestricted Ratio', value: methods.m1 },
-    { key: 'M2' as const, label: 'M2', formula: 'M1 + ST Investments × Ratio', value: methods.m2 },
-    { key: 'M3' as const, label: 'M3', formula: 'M2 + Board-Designated', value: methods.m3 },
+    { key: 'M1' as const, label: 'Low', formula: 'Unrestricted NA − PP&E', value: methods.m1 },
+    { key: 'M2' as const, label: 'Midpoint', formula: 'Avg(Low, High)', value: methods.m2 },
+    { key: 'M3' as const, label: 'High', formula: 'Low + Deferred Rev + Tax-Exempt Bonds', value: methods.m3 },
   ]
+
+  const prevFiling = selectedFiling
+    ? (sortedFilings[sortedFilings.findIndex(f => f.fiscal_year === selectedFiling.fiscal_year) - 1] ?? null)
+    : null
+
+  const customMetrics = selectedFiling ? {
+    monthlyOpex: calcMonthlyOpex(selectedFiling),
+    reserveCoverage: calcReserveCoverage(methods.m2, selectedFiling),
+    personnelPct: calcPersonnelPct(selectedFiling),
+    earned: calcEarned(selectedFiling),
+    contributed: calcContributed(selectedFiling),
+    yoyRestrictionChange: calcYoYRestrictionChange(selectedFiling, prevFiling),
+    estUnrestrictedContrib: calcEstUnrestrictedContrib(selectedFiling, prevFiling),
+    unrestrictedOpIncome: calcUnrestrictedOpIncome(selectedFiling, prevFiling),
+    earnedPct: calcEarnedPct(selectedFiling, prevFiling),
+    contribPct: calcContribPct(selectedFiling, prevFiling),
+  } : null
 
   const exportHref = `/api/export?ein=${organization.ein}`
 
@@ -391,7 +422,7 @@ export default function InstitutionView({
         </div>
       )}
 
-      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+      <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, overflowY: 'auto' }}>
 
         {/* ── Year Strip ── */}
         <div
@@ -720,6 +751,68 @@ export default function InstitutionView({
                 </div>
               </div>
             </div>
+
+            {/* ── Custom Metrics ── */}
+            {customMetrics && (
+              <div style={{ marginTop: '16px' }}>
+                <div
+                  style={{
+                    backgroundColor: C.surface,
+                    border: `1px solid ${C.border}`,
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      backgroundColor: C.sectionHeaderBg,
+                      padding: '8px 16px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: C.textPrimary,
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    Custom Metrics — FY {selectedYear}
+                  </div>
+                  <div style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 32px' }}>
+                    <div>
+                      <FinRow label="Monthly Opex" value={customMetrics.monthlyOpex} />
+                      <FinRow
+                        label="Reserve Coverage"
+                        value={null}
+                        formatted={customMetrics.reserveCoverage !== null ? `${customMetrics.reserveCoverage.toFixed(1)}x` : '—'}
+                      />
+                      <FinRow
+                        label="Personnel as % of Annual"
+                        value={null}
+                        formatted={customMetrics.personnelPct !== null ? `${(customMetrics.personnelPct * 100).toFixed(1)}%` : '—'}
+                      />
+                    </div>
+                    <div>
+                      <FinRow label="Unrestricted Operating Income Est" value={customMetrics.unrestrictedOpIncome} isTotal />
+                      <div style={{ height: '8px' }} />
+                      <FinRow label="Earned" value={customMetrics.earned} />
+                      <FinRow
+                        label="Earned as % of Income"
+                        value={null}
+                        formatted={customMetrics.earnedPct !== null ? `${(customMetrics.earnedPct * 100).toFixed(1)}%` : '—'}
+                      />
+                      <div style={{ height: '8px' }} />
+                      <FinRow label="Est. Unrestricted Contrib" value={customMetrics.estUnrestrictedContrib} />
+                      <FinRow
+                        label="Contributed as % of Income"
+                        value={null}
+                        formatted={customMetrics.contribPct !== null ? `${(customMetrics.contribPct * 100).toFixed(1)}%` : '—'}
+                      />
+                      <div style={{ height: '8px' }} />
+                      <FinRow label="Contributed (gross)" value={customMetrics.contributed} />
+                      <FinRow label="YoY Restriction Change" value={customMetrics.yoyRestrictionChange} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

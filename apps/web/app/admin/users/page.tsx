@@ -131,7 +131,7 @@ export default function UsersPage() {
         <button onClick={handleSignOut} style={btnSecondary}>
           Sign out
         </button>
-        <button onClick={() => { setAddOpen(true); setAddError('') }} style={btnPrimary}>
+        <button onClick={() => { setAddOpen(true); setAddError(''); setAddEmail(''); setAddName(''); setAddPassword(''); setAddRole('user') }} style={btnPrimary}>
           + Add User
         </button>
       </div>
@@ -260,10 +260,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     <div
       style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.35)', zIndex: 200,
         display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-      onClick={onClose}
+      onMouseDown={onClose}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{ backgroundColor: '#FFFFFF', borderRadius: '8px', padding: '24px', width: '380px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.18)' }}
       >

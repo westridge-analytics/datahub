@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from pathlib import Path
@@ -105,6 +106,54 @@ NTEE_SECTOR_MAP = {
     "Z": "Unknown",
 }
 
+# IRS source field names that are extracted into named filings columns.
+# Everything else in a raw row lands in filings_raw.raw_data.
+PROMOTED_FIELDS = {
+    # identifiers / period
+    "elf", "efile", "e-file", "ein", "tax_pd", "tax_prd", "taxprd", "taxpd",
+    "a_tax_prd", "subseccd",
+    # existing main financials
+    "totrevenue", "totfuncexpns", "totassetsend", "totliabend", "totnetassetend",
+    "totcntrbgfts", "totprgmrevnue", "invstmntinc",
+    "totprgmrvnueexpns", "totgeneralexpns", "totfundrsng",
+    "nonintcashend", "cashnonsaved",
+    "svngstempinvend", "svngstempinvst",
+    "lndbldgsequipend", "lndbldgsequip",
+    "invstmntsend", "invstmntsothrend",
+    "invstmntspublicly", "invstmntsothrsec",
+    "unrstrctnetasstsend", "unrstrctdnetasstsend",
+    "temprstrctnetasstsend", "temprstrctdnetasstsend",
+    "permrstrctnetasstsend", "permrstrctdnetasstsend",
+    # new: headcount
+    "noemplyeesw3cnt", "noindiv100kcnt", "nocontractor100kcnt",
+    # new: compensation summary
+    "totreprtabled", "totcomprelatede", "totestcompf",
+    # new: Part IX expense detail
+    "compnsatncurrofcr", "compnsatnandothr", "othrsalwages",
+    "pensionplancontrb", "othremplyeebenef", "payrolltx",
+    "profndraising", "feesforsrvcmgmt", "legalfees", "accntingfees",
+    "occupancy", "travel", "infotech", "deprcatndepletn", "insurance",
+    # new: grants paid
+    "grntstogovt", "grnsttoindiv", "grntstofrgngovt",
+    # new: revenue components
+    "royaltsinc", "netrntlinc", "netgnls", "netincfndrsng", "netincgaming",
+    # new: balance sheet detail
+    "pldgegrntrcvblend", "accntspayableend", "txexmptbndsend",
+    "invstmntsprgmend",
+    # new: governance flags
+    "lbbyingactvtscd", "politicalactvtscd", "unrelbusinccd",
+    "frgnofficecd", "frgngrntscd", "operatehosptlcd", "operateschools170cd",
+    "reltdorgcd",
+    # EZ-specific synonyms already handled
+    "totrevnue", "totexpns", "totassetsend", "totliabend",
+    "totnetassetsend", "networthend",
+    "totcntrbs", "prgmservrev", "othrinvstinc",
+    # PF-specific synonyms already handled
+    "totrcptperbks", "totexpnspbks", "tfundnworth",
+    "grscontrgifts", "netinvstinc", "topradmnexpnsa", "othrcashamt",
+    "totinvstsec", "invstcorpstk", "invstcorpbnd", "invstgovtoblig",
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -132,6 +181,18 @@ def parse_int(value) -> int | None:
         return int(float(s))
     except (ValueError, OverflowError):
         return None
+
+
+def parse_bool(value) -> bool | None:
+    """Parse IRS Y/N flag to bool; return None if absent."""
+    if value is None:
+        return None
+    s = str(value).strip().upper()
+    if s in ("Y", "1", "TRUE", "YES"):
+        return True
+    if s in ("N", "0", "FALSE", "NO"):
+        return False
+    return None
 
 
 def tax_period_to_date(raw) -> tuple[str | None, int | None]:
@@ -169,6 +230,77 @@ def derive_other_revenue(
     return total_revenue - (contributions or 0) - (program_revenue or 0) - (investment_income or 0)
 
 
+def build_raw_data(row: dict) -> dict:
+    """Return a dict of all row fields not already promoted to named columns."""
+    return {k: v for k, v in row.items() if k not in PROMOTED_FIELDS and v not in (None, "", ".")}
+
+
+def extract_990_fields(row: dict) -> dict:
+    """
+    Extract all new research-grade fields from a full Form 990 row.
+    Works for both space-delimited (.dat) and CSV formats — field names are
+    the same across both; absent fields just return None.
+    """
+    return {
+        # Headcount
+        "num_employees":          parse_int(row.get("noemplyeesw3cnt")),
+        "num_highly_compensated": parse_int(row.get("noindiv100kcnt")),
+        "num_contractors_100k":   parse_int(row.get("nocontractor100kcnt")),
+        # Compensation summary
+        "comp_total_reported":    parse_int(row.get("totreprtabled")),
+        "comp_related_orgs":      parse_int(row.get("totcomprelatede")),
+        "comp_estimated_other":   parse_int(row.get("totestcompf")),
+        # Part IX: compensation & payroll
+        "comp_officers":          parse_int(row.get("compnsatncurrofcr")),
+        "comp_disqualified":      parse_int(row.get("compnsatnandothr")),
+        "comp_other_salaries":    parse_int(row.get("othrsalwages")),
+        "pension_contributions":  parse_int(row.get("pensionplancontrb")),
+        "employee_benefits":      parse_int(row.get("othremplyeebenef")),
+        "payroll_taxes":          parse_int(row.get("payrolltx")),
+        # Part IX: fees
+        "management_fees":                parse_int(row.get("feesforsrvcmgmt")),
+        "legal_fees":                     parse_int(row.get("legalfees")),
+        "accounting_fees":                parse_int(row.get("accntingfees")),
+        "professional_fundraising_fees":  parse_int(row.get("profndraising")),
+        # Part IX: operating
+        "occupancy":    parse_int(row.get("occupancy")),
+        "travel":       parse_int(row.get("travel")),
+        "it_expenses":  parse_int(row.get("infotech")),
+        "depreciation": parse_int(row.get("deprcatndepletn")),
+        "insurance":    parse_int(row.get("insurance")),
+        # Part IX: grants
+        "grants_to_govts":       parse_int(row.get("grntstogovt")),
+        "grants_to_individuals": parse_int(row.get("grnsttoindiv")),   # IRS typo: grnst
+        "grants_to_foreign":     parse_int(row.get("grntstofrgngovt")),
+        # Part VIII: revenue components
+        "royalties_income":        parse_int(row.get("royaltsinc")),
+        "net_rental_income":       parse_int(row.get("netrntlinc")),
+        "net_asset_sale_gains":    parse_int(row.get("netgnls")),
+        "net_fundraising_income":  parse_int(row.get("netincfndrsng")),
+        "net_gaming_income":       parse_int(row.get("netincgaming")),
+        # Part X: balance sheet detail
+        "pledges_receivable":          parse_int(row.get("pldgegrntrcvblend")),
+        "accounts_payable":            parse_int(row.get("accntspayableend")),
+        "tax_exempt_bonds_liability":  parse_int(row.get("txexmptbndsend")),
+        "investments_publicly_traded": parse_int(row.get("invstmntsend")),
+        "investments_other":           parse_int(row.get("invstmntsothrend")),
+        "investments_program_related": parse_int(row.get("invstmntsprgmend")),
+        "temp_restricted_net_assets":  parse_int(row.get("temprstrctnetasstsend")),
+        "perm_restricted_net_assets":  parse_int(row.get("permrstrctnetasstsend")),
+        # Org classification
+        "subsection_code": str(row.get("subseccd") or "").strip() or None,
+        # Governance flags
+        "has_lobbying":                  parse_bool(row.get("lbbyingactvtscd")),
+        "has_political_activity":        parse_bool(row.get("politicalactvtscd")),
+        "has_unrelated_business_income": parse_bool(row.get("unrelbusinccd")),
+        "has_foreign_office":            parse_bool(row.get("frgnofficecd")),
+        "has_foreign_grants":            parse_bool(row.get("frgngrntscd")),
+        "operates_hospital":             parse_bool(row.get("operatehosptlcd")),
+        "operates_school":               parse_bool(row.get("operateschools170cd")),
+        "has_related_orgs":              parse_bool(row.get("reltdorgcd")),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Row normalisation
 # ---------------------------------------------------------------------------
@@ -177,48 +309,35 @@ def derive_other_revenue(
 def normalise_space_delimited(row: dict, source_file: str) -> dict | None:
     """
     Normalise a row from a space-delimited file.
-    The `row` dict uses lowercase keys (header is normalised on read).
     Returns None if the row should be skipped.
-
-    Form-type filtering:
-    - py12–14: no elf column; all rows are Form 990.
-    - 15eo: elf = E (Form 990) or P (990-PF/EZ); filter to E.
-    - 16eo–17eo: elf = Y/N (electronic filing indicator, not form type);
-                 the file extract is 990-only so include all rows.
     """
     elf = row.get("elf", "").strip().upper()
-    # If elf is present and in E/P encoding, filter to E only
     if elf in ("P",):
         return None
 
-    # EIN
     ein = fmt_ein(row.get("ein", ""))
     if ein is None:
         return None
 
-    # Tax period — field is tax_prd in py12–15 files, tax_pd in 16eo–17eo files
     tax_period_raw = row.get("tax_prd") or row.get("tax_pd") or ""
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
 
-    # Financial fields
-    total_revenue = parse_int(row.get("totrevenue"))
-    contributions = parse_int(row.get("totcntrbgfts"))
-    program_revenue = parse_int(row.get("totprgmrevnue"))
+    total_revenue    = parse_int(row.get("totrevenue"))
+    contributions    = parse_int(row.get("totcntrbgfts"))
+    program_revenue  = parse_int(row.get("totprgmrevnue"))
     investment_income = parse_int(row.get("invstmntinc"))
-    total_expenses = parse_int(row.get("totfuncexpns"))
-    total_assets = parse_int(row.get("totassetsend"))
+    total_expenses   = parse_int(row.get("totfuncexpns"))
+    total_assets     = parse_int(row.get("totassetsend"))
     total_liabilities = parse_int(row.get("totliabend"))
     total_net_assets = parse_int(row.get("totnetassetend"))
 
-    # Expense breakdown — py12–py14 files do not have these columns
-    program_expenses = parse_int(row.get("totprgmrvnueexpns"))  # absent in space-del
-    ga_expenses = parse_int(row.get("totgeneralexpns"))          # absent in space-del
-    fundraising_expenses = parse_int(row.get("totfundrsng"))     # absent in space-del
+    program_expenses    = parse_int(row.get("totprgmrvnueexpns"))
+    ga_expenses         = parse_int(row.get("totgeneralexpns"))
+    fundraising_expenses = parse_int(row.get("totfundrsng"))
 
-    # Balance sheet
-    cash_equiv = parse_int(row.get("cashnonsaved") or row.get("nonintcashend"))
+    cash_equiv   = parse_int(row.get("cashnonsaved") or row.get("nonintcashend"))
     st_investments = parse_int(row.get("svngstempinvst") or row.get("svngstempinvend"))
     lt_investments = sum_fields(row, "invstmntspublicly", "invstmntsothrsec")
     if lt_investments is None:
@@ -227,19 +346,15 @@ def normalise_space_delimited(row: dict, source_file: str) -> dict | None:
     unrestr_net_assets = parse_int(
         row.get("unrstrctdnetasstsend") or row.get("unrstrctnetasstsend")
     )
-    restr_net_assets = sum_fields(
-        row, "temprstrctdnetasstsend", "permrstrctdnetasstsend"
-    )
+    restr_net_assets = sum_fields(row, "temprstrctdnetasstsend", "permrstrctdnetasstsend")
     if restr_net_assets is None:
-        restr_net_assets = sum_fields(
-            row, "temprstrctnetasstsend", "permrstrctnetasstsend"
-        )
+        restr_net_assets = sum_fields(row, "temprstrctnetasstsend", "permrstrctnetasstsend")
 
-    other_revenue = derive_other_revenue(
-        total_revenue, contributions, program_revenue, investment_income
-    )
+    other_revenue = derive_other_revenue(total_revenue, contributions, program_revenue, investment_income)
 
-    return {
+    filing_method = elf if elf in ("E", "Y", "N") else None
+
+    rec = {
         "ein": ein,
         "tax_period": tax_period,
         "fiscal_year": fiscal_year,
@@ -262,7 +377,11 @@ def normalise_space_delimited(row: dict, source_file: str) -> dict | None:
         "unrestr_net_assets": unrestr_net_assets,
         "restr_net_assets": restr_net_assets,
         "source_file": source_file,
+        "filing_method": filing_method,
     }
+    rec.update(extract_990_fields(row))
+    rec["raw_data"] = build_raw_data(row)
+    return rec
 
 
 def normalise_csv(row: dict, source_file: str) -> dict | None:
@@ -270,54 +389,42 @@ def normalise_csv(row: dict, source_file: str) -> dict | None:
     Normalise a row from a CSV file (18eo–24eo).
     Returns None if the row should be skipped (not full Form 990).
     """
-    # Filter to full Form 990.
-    # 18eo/19eo use column name 'elf'; 20eo+ use 'efile'.  Both use 'E' for
-    # electronic Form 990 and 'P' for 990-PF / 990-EZ.
     elf = (row.get("elf") or row.get("efile") or "").strip().upper()
     if elf != "E":
         return None
 
-    # EIN — CSV header uses 'ein' (lowercase after BOM strip)
     ein = fmt_ein(row.get("ein", ""))
     if ein is None:
         return None
 
-    # Tax period — field is tax_pd in CSV files
     tax_period_raw = row.get("tax_pd", "")
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
 
-    # Financial fields
-    total_revenue = parse_int(row.get("totrevenue"))
-    contributions = parse_int(row.get("totcntrbgfts"))
-    program_revenue = parse_int(row.get("totprgmrevnue"))
+    total_revenue    = parse_int(row.get("totrevenue"))
+    contributions    = parse_int(row.get("totcntrbgfts"))
+    program_revenue  = parse_int(row.get("totprgmrevnue"))
     investment_income = parse_int(row.get("invstmntinc"))
-    total_expenses = parse_int(row.get("totfuncexpns"))
-    total_assets = parse_int(row.get("totassetsend"))
+    total_expenses   = parse_int(row.get("totfuncexpns"))
+    total_assets     = parse_int(row.get("totassetsend"))
     total_liabilities = parse_int(row.get("totliabend"))
     total_net_assets = parse_int(row.get("totnetassetend"))
 
-    # Expense breakdown
-    program_expenses = parse_int(row.get("totprgmrvnueexpns"))
-    ga_expenses = parse_int(row.get("totgeneralexpns"))
+    program_expenses    = parse_int(row.get("totprgmrvnueexpns"))
+    ga_expenses         = parse_int(row.get("totgeneralexpns"))
     fundraising_expenses = parse_int(row.get("totfundrsng"))
 
-    # Balance sheet — CSV field names
-    cash_equiv = parse_int(row.get("nonintcashend"))
+    cash_equiv     = parse_int(row.get("nonintcashend"))
     st_investments = parse_int(row.get("svngstempinvend"))
     lt_investments = sum_fields(row, "invstmntsend", "invstmntsothrend")
-    ppe = parse_int(row.get("lndbldgsequipend"))
+    ppe            = parse_int(row.get("lndbldgsequipend"))
     unrestr_net_assets = parse_int(row.get("unrstrctnetasstsend"))
-    restr_net_assets = sum_fields(
-        row, "temprstrctnetasstsend", "permrstrctnetasstsend"
-    )
+    restr_net_assets   = sum_fields(row, "temprstrctnetasstsend", "permrstrctnetasstsend")
 
-    other_revenue = derive_other_revenue(
-        total_revenue, contributions, program_revenue, investment_income
-    )
+    other_revenue = derive_other_revenue(total_revenue, contributions, program_revenue, investment_income)
 
-    return {
+    rec = {
         "ein": ein,
         "tax_period": tax_period,
         "fiscal_year": fiscal_year,
@@ -340,16 +447,14 @@ def normalise_csv(row: dict, source_file: str) -> dict | None:
         "unrestr_net_assets": unrestr_net_assets,
         "restr_net_assets": restr_net_assets,
         "source_file": source_file,
+        "filing_method": elf,
     }
+    rec.update(extract_990_fields(row))
+    rec["raw_data"] = build_raw_data(row)
+    return rec
 
 
-def _ez_record(
-    ein: str,
-    tax_period: str,
-    fiscal_year: int,
-    row: dict,
-    source_file: str,
-) -> dict:
+def _ez_record(ein, tax_period, fiscal_year, row, source_file, filing_method=None) -> dict:
     """Build a normalised filing dict from 990-EZ fields."""
     total_revenue    = parse_int(row.get("totrevnue"))
     total_expenses   = parse_int(row.get("totexpns"))
@@ -374,7 +479,6 @@ def _ez_record(
         "program_revenue": program_revenue,
         "investment_income": investment_income,
         "other_revenue": other_revenue,
-        # EZ doesn't have expense breakdowns or detailed balance sheet items
         "program_expenses": None,
         "ga_expenses": None,
         "fundraising_expenses": None,
@@ -386,13 +490,34 @@ def _ez_record(
         "restr_net_assets": None,
         "source_file": source_file,
         "form_type": "990EZ",
+        "filing_method": filing_method,
+        # EZ has limited new fields
+        "subsection_code": str(row.get("subseccd") or "").strip() or None,
+        "has_unrelated_business_income": parse_bool(row.get("unrelbusincd") or row.get("unrelbusinccd")),
+        "net_fundraising_income": parse_int(row.get("netincfndrsng")),
+        "num_employees": None, "num_highly_compensated": None, "num_contractors_100k": None,
+        "comp_total_reported": None, "comp_related_orgs": None, "comp_estimated_other": None,
+        "comp_officers": None, "comp_disqualified": None, "comp_other_salaries": None,
+        "pension_contributions": None, "employee_benefits": None, "payroll_taxes": None,
+        "management_fees": None, "legal_fees": None, "accounting_fees": None,
+        "professional_fundraising_fees": None, "occupancy": None, "travel": None,
+        "it_expenses": None, "depreciation": None, "insurance": None,
+        "grants_to_govts": None, "grants_to_individuals": None, "grants_to_foreign": None,
+        "royalties_income": None, "net_rental_income": None, "net_asset_sale_gains": None,
+        "net_gaming_income": None,
+        "pledges_receivable": None, "accounts_payable": None, "tax_exempt_bonds_liability": None,
+        "investments_publicly_traded": None, "investments_other": None,
+        "investments_program_related": None,
+        "temp_restricted_net_assets": None, "perm_restricted_net_assets": None,
+        "has_lobbying": None, "has_political_activity": None,
+        "has_foreign_office": None, "has_foreign_grants": None,
+        "operates_hospital": None, "operates_school": None, "has_related_orgs": None,
+        "raw_data": build_raw_data(row),
     }
 
 
 def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
-    """Normalise a row from a space-delimited 990-EZ file."""
     elf = row.get("elf", "").strip().upper()
-    # elf = P → 990-PF, skip. elf = Y/N → electronic indicator (17eo), include all.
     if elf in ("P",):
         return None
 
@@ -400,37 +525,36 @@ def normalise_ez_space_delimited(row: dict, source_file: str) -> dict | None:
     if ein is None:
         return None
 
-    # py12–14: no elf, tax period = taxprd or a_tax_prd
-    # 15eo–17eo: elf present, tax period = a_tax_prd or tax_prd
     tax_period_raw = (
-        row.get("a_tax_prd")
-        or row.get("tax_prd")
-        or row.get("tax_pd")
-        or row.get("taxprd")   # py14_EZ.dat
-        or row.get("taxpd")    # 17eofinextractEZ.dat
-        or ""
+        row.get("a_tax_prd") or row.get("tax_prd") or row.get("tax_pd")
+        or row.get("taxprd") or row.get("taxpd") or ""
     )
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
 
-    return _ez_record(ein, tax_period, fiscal_year, row, source_file)
+    return _ez_record(ein, tax_period, fiscal_year, row, source_file, filing_method=elf or None)
 
 
-def _pf_record(
-    ein: str,
-    tax_period: str,
-    fiscal_year: int,
-    row: dict,
-    source_file: str,
-) -> dict:
-    """Build a normalised filing dict from 990-PF fields.
+def normalise_ez_csv(row: dict, source_file: str) -> dict | None:
+    elf = (row.get("efile") or row.get("e-file") or row.get("elf") or "").strip().upper()
+    if elf != "E":
+        return None
 
-    PF revenue = TOTRCPTPERBKS (total receipts per books).
-    PF net assets = TFUNDNWORTH (total fund net worth).
-    PF doesn't use program_revenue / program_expenses in the same sense
-    as Form 990; those fields are left None.
-    """
+    ein = fmt_ein(row.get("ein", ""))
+    if ein is None:
+        return None
+
+    tax_period_raw = row.get("taxpd") or row.get("tax_pd") or ""
+    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
+    if tax_period is None:
+        return None
+
+    return _ez_record(ein, tax_period, fiscal_year, row, source_file, filing_method=elf)
+
+
+def _pf_record(ein, tax_period, fiscal_year, row, source_file) -> dict:
+    """Build a normalised filing dict from 990-PF fields."""
     total_revenue    = parse_int(row.get("totrcptperbks"))
     total_expenses   = parse_int(row.get("totexpnspbks"))
     total_assets     = parse_int(row.get("totassetsend"))
@@ -438,15 +562,9 @@ def _pf_record(
     total_net_assets = parse_int(row.get("tfundnworth"))
     contributions    = parse_int(row.get("grscontrgifts"))
     investment_income = parse_int(row.get("netinvstinc"))
-    # PF has no program_revenue line; other income = total - contribs - investment
     other_revenue    = derive_other_revenue(total_revenue, contributions, None, investment_income)
-
-    # Expenses: TOPRADMNEXPNSA is the total admin/operating expense column
     ga_expenses      = parse_int(row.get("topradmnexpnsa"))
-
-    # Balance sheet
     cash_equiv       = parse_int(row.get("othrcashamt"))
-    # TOTINVSTSEC = total investment securities (stocks + bonds)
     lt_investments   = parse_int(row.get("totinvstsec"))
     if lt_investments is None:
         lt_investments = sum_fields(row, "invstcorpstk", "invstcorpbnd", "invstgovtoblig")
@@ -475,54 +593,50 @@ def _pf_record(
         "restr_net_assets": None,
         "source_file": source_file,
         "form_type": "990PF",
+        "filing_method": None,
+        "subsection_code": str(row.get("subseccd") or "").strip() or None,
+        # PF doesn't have the standard governance flags or Part IX detail
+        "num_employees": None, "num_highly_compensated": None, "num_contractors_100k": None,
+        "comp_total_reported": None, "comp_related_orgs": None, "comp_estimated_other": None,
+        "comp_officers": None, "comp_disqualified": None, "comp_other_salaries": None,
+        "pension_contributions": None, "employee_benefits": None, "payroll_taxes": None,
+        "management_fees": None, "legal_fees": None, "accounting_fees": None,
+        "professional_fundraising_fees": None, "occupancy": None, "travel": None,
+        "it_expenses": None, "depreciation": None, "insurance": None,
+        "grants_to_govts": None, "grants_to_individuals": None, "grants_to_foreign": None,
+        "royalties_income": None, "net_rental_income": None, "net_asset_sale_gains": None,
+        "net_fundraising_income": None, "net_gaming_income": None,
+        "pledges_receivable": None, "accounts_payable": None, "tax_exempt_bonds_liability": None,
+        "investments_publicly_traded": None, "investments_other": None,
+        "investments_program_related": None,
+        "temp_restricted_net_assets": None, "perm_restricted_net_assets": None,
+        "has_lobbying": None, "has_political_activity": None, "has_unrelated_business_income": None,
+        "has_foreign_office": None, "has_foreign_grants": None,
+        "operates_hospital": None, "operates_school": None, "has_related_orgs": None,
+        "raw_data": build_raw_data(row),
     }
 
 
 def normalise_pf_space_delimited(row: dict, source_file: str) -> dict | None:
-    """Normalise a row from a space-delimited 990-PF file."""
     ein = fmt_ein(row.get("ein", ""))
     if ein is None:
         return None
-
     tax_period_raw = row.get("tax_prd") or row.get("tax_pd") or ""
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
-
     return _pf_record(ein, tax_period, fiscal_year, row, source_file)
 
 
 def normalise_pf_csv(row: dict, source_file: str) -> dict | None:
-    """Normalise a row from a CSV 990-PF file. Includes both E and P filers."""
     ein = fmt_ein(row.get("ein", ""))
     if ein is None:
         return None
-
     tax_period_raw = row.get("tax_prd") or row.get("tax_pd") or ""
     tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
     if tax_period is None:
         return None
-
     return _pf_record(ein, tax_period, fiscal_year, row, source_file)
-
-
-def normalise_ez_csv(row: dict, source_file: str) -> dict | None:
-    """Normalise a row from a CSV 990-EZ file."""
-    # 20eoextractez.csv uses 'e-file' (with hyphen); others use 'efile'
-    elf = (row.get("efile") or row.get("e-file") or row.get("elf") or "").strip().upper()
-    if elf != "E":
-        return None
-
-    ein = fmt_ein(row.get("ein", ""))
-    if ein is None:
-        return None
-
-    tax_period_raw = row.get("taxpd") or row.get("tax_pd") or ""
-    tax_period, fiscal_year = tax_period_to_date(tax_period_raw)
-    if tax_period is None:
-        return None
-
-    return _ez_record(ein, tax_period, fiscal_year, row, source_file)
 
 
 # ---------------------------------------------------------------------------
@@ -543,12 +657,10 @@ def is_space_delimited_pf(filename: str) -> bool:
 
 
 def _normalise_row(row: dict) -> dict:
-    """Return a new dict with all keys lowercased and stripped."""
-    return {k.lower().strip(): v for k, v in row.items()}
+    return {k.lower().strip().lstrip("﻿"): v for k, v in row.items()}
 
 
 def read_space_delimited(filepath: Path) -> list[dict]:
-    """Read a space-delimited .dat file; normalise header keys to lowercase."""
     rows = []
     with open(filepath, encoding="utf-8", errors="replace") as fh:
         reader = csv.DictReader(fh, delimiter=" ")
@@ -558,7 +670,6 @@ def read_space_delimited(filepath: Path) -> list[dict]:
 
 
 def read_csv(filepath: Path) -> list[dict]:
-    """Read a CSV file; handle BOM and normalise header keys to lowercase."""
     rows = []
     with open(filepath, encoding="utf-8-sig", errors="replace") as fh:
         reader = csv.DictReader(fh)
@@ -571,50 +682,89 @@ def read_csv(filepath: Path) -> list[dict]:
 # Database upsert
 # ---------------------------------------------------------------------------
 
-UPSERT_FILING_SQL = """
-INSERT INTO filings (
-    ein, tax_period, fiscal_year,
-    total_revenue, total_expenses, total_assets, total_liabilities, total_net_assets,
-    contributions, program_revenue, investment_income, other_revenue,
-    program_expenses, ga_expenses, fundraising_expenses,
-    cash_equiv, st_investments, lt_investments, ppe,
-    unrestr_net_assets, restr_net_assets, source_file, form_type
-) VALUES %s
+# All columns in the filings table (in order)
+FILING_COLS = [
+    "ein", "tax_period", "fiscal_year",
+    "total_revenue", "total_expenses", "total_assets", "total_liabilities", "total_net_assets",
+    "contributions", "program_revenue", "investment_income", "other_revenue",
+    "program_expenses", "ga_expenses", "fundraising_expenses",
+    "cash_equiv", "st_investments", "lt_investments", "ppe",
+    "unrestr_net_assets", "restr_net_assets",
+    "source_file", "form_type",
+    # new columns
+    "num_employees", "num_highly_compensated", "num_contractors_100k",
+    "comp_total_reported", "comp_related_orgs", "comp_estimated_other",
+    "comp_officers", "comp_disqualified", "comp_other_salaries",
+    "pension_contributions", "employee_benefits", "payroll_taxes",
+    "management_fees", "legal_fees", "accounting_fees", "professional_fundraising_fees",
+    "occupancy", "travel", "it_expenses", "depreciation", "insurance",
+    "grants_to_govts", "grants_to_individuals", "grants_to_foreign",
+    "royalties_income", "net_rental_income", "net_asset_sale_gains",
+    "net_fundraising_income", "net_gaming_income",
+    "pledges_receivable", "accounts_payable", "tax_exempt_bonds_liability",
+    "investments_publicly_traded", "investments_other", "investments_program_related",
+    "temp_restricted_net_assets", "perm_restricted_net_assets",
+    "subsection_code", "filing_method",
+    "has_lobbying", "has_political_activity", "has_unrelated_business_income",
+    "has_foreign_office", "has_foreign_grants", "operates_hospital",
+    "operates_school", "has_related_orgs",
+]
+
+_update_cols = [c for c in FILING_COLS if c not in ("ein", "tax_period")]
+_col_list    = ", ".join(FILING_COLS)
+_val_placeholders = ", ".join(["%s"] * len(FILING_COLS))
+_update_set  = ", ".join(f"{c} = EXCLUDED.{c}" for c in _update_cols)
+
+UPSERT_FILING_SQL = f"""
+INSERT INTO filings ({_col_list})
+VALUES %s
 ON CONFLICT (ein, tax_period) DO UPDATE SET
-    fiscal_year          = EXCLUDED.fiscal_year,
-    total_revenue        = EXCLUDED.total_revenue,
-    total_expenses       = EXCLUDED.total_expenses,
-    total_assets         = EXCLUDED.total_assets,
-    total_liabilities    = EXCLUDED.total_liabilities,
-    total_net_assets     = EXCLUDED.total_net_assets,
-    contributions        = EXCLUDED.contributions,
-    program_revenue      = EXCLUDED.program_revenue,
-    investment_income    = EXCLUDED.investment_income,
-    other_revenue        = EXCLUDED.other_revenue,
-    program_expenses     = EXCLUDED.program_expenses,
-    ga_expenses          = EXCLUDED.ga_expenses,
-    fundraising_expenses = EXCLUDED.fundraising_expenses,
-    cash_equiv           = EXCLUDED.cash_equiv,
-    st_investments       = EXCLUDED.st_investments,
-    lt_investments       = EXCLUDED.lt_investments,
-    ppe                  = EXCLUDED.ppe,
-    unrestr_net_assets   = EXCLUDED.unrestr_net_assets,
-    restr_net_assets     = EXCLUDED.restr_net_assets,
-    source_file          = EXCLUDED.source_file,
-    form_type            = EXCLUDED.form_type
+    {_update_set}
+"""
+
+UPSERT_RAW_SQL = """
+INSERT INTO filings_raw (ein, tax_period, form_type, source_file, raw_data)
+VALUES %s
+ON CONFLICT (ein, tax_period) DO UPDATE SET
+    form_type   = EXCLUDED.form_type,
+    source_file = EXCLUDED.source_file,
+    raw_data    = EXCLUDED.raw_data
 """
 
 
 def upsert_filings(conn, records: list[dict], dry_run: bool) -> int:
-    """Upsert a list of filing dicts. Returns number of rows processed."""
-    if not records:
-        return 0
-    if dry_run:
+    if not records or dry_run:
         return len(records)
+    # back-fill defaults
+    for r in records:
+        r.setdefault("form_type", "990")
+        for col in FILING_COLS:
+            r.setdefault(col, None)
+
     with conn.cursor() as cur:
-        cur.executemany(UPSERT_FILING_SQL, records)
+        row_tuples = [tuple(r[c] for c in FILING_COLS) for r in records]
+        psycopg2.extras.execute_values(cur, UPSERT_FILING_SQL, row_tuples, page_size=len(records))
     conn.commit()
     return len(records)
+
+
+def upsert_raw(conn, records: list[dict], dry_run: bool) -> int:
+    if not records or dry_run:
+        return len(records)
+    row_tuples = [
+        (
+            r["ein"],
+            r["tax_period"],
+            r.get("form_type", "990"),
+            r.get("source_file"),
+            json.dumps(r.get("raw_data") or {}),
+        )
+        for r in records
+    ]
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, UPSERT_RAW_SQL, row_tuples, page_size=len(row_tuples))
+    conn.commit()
+    return len(row_tuples)
 
 
 # ---------------------------------------------------------------------------
@@ -641,12 +791,6 @@ def decode_sector(ntee_code: str | None) -> str:
 
 
 def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url: str | None = None) -> None:
-    """
-    Read the IRS EO BMF CSV file and upsert into the organizations table.
-
-    The BMF file uses uppercase column names; common fields:
-        EIN, NAME, STATE, NTEE_CD, SUBSECCD
-    """
     filepath = Path(filepath)
     print(f"\n[EO BMF] Reading {filepath.name} ...")
 
@@ -655,37 +799,24 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url
 
     with open(filepath, encoding="utf-8-sig", errors="replace") as fh:
         reader = csv.DictReader(fh)
-        # Normalise keys to lowercase
         if reader.fieldnames:
             reader.fieldnames = [f.lower().strip() for f in reader.fieldnames]
 
         for raw in reader:
             row = {k.lower().strip(): v for k, v in raw.items()}
-
             ein = fmt_ein(row.get("ein", ""))
             if ein is None:
                 skipped += 1
                 continue
-
             name = str(row.get("name", "") or "").strip()
             if not name:
                 name = str(row.get("organization_name", "") or "").strip()
-
-            state = str(row.get("state", "") or row.get("st", "") or "").strip() or None
+            state     = str(row.get("state", "") or row.get("st", "") or "").strip() or None
             ntee_code = str(row.get("ntee_cd", "") or row.get("nteecc", "") or "").strip() or None
-            sector = decode_sector(ntee_code)
-            subseccd = parse_int(row.get("subseccd"))
-
-            records.append(
-                {
-                    "ein": ein,
-                    "name": name,
-                    "state": state,
-                    "ntee_code": ntee_code,
-                    "sector": sector,
-                    "subseccd": subseccd,
-                }
-            )
+            sector    = decode_sector(ntee_code)
+            subseccd  = parse_int(row.get("subseccd"))
+            records.append({"ein": ein, "name": name, "state": state,
+                            "ntee_code": ntee_code, "sector": sector, "subseccd": subseccd})
 
     print(f"[EO BMF] Read {len(records) + skipped} rows — {skipped} skipped (bad EIN)")
 
@@ -697,7 +828,7 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url
     total_upserted = 0
     i = 0
     while i < len(records):
-        batch = records[i : i + batch_size]
+        batch = records[i: i + batch_size]
         row_tuples = [(r["ein"], r["name"], r["state"], r["ntee_code"], r["sector"], r["subseccd"]) for r in batch]
         try:
             with conn.cursor() as cur:
@@ -742,11 +873,8 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
 
     print(f"[{filename}] {len(raw_rows)} rows read", flush=True)
 
-    records: list[dict] = []
-    skipped = 0
-
-    # Deduplication within this file: last row for (ein, tax_period) wins.
     dedup: dict[tuple, dict] = {}
+    skipped = 0
 
     for raw in raw_rows:
         if space_delim:
@@ -767,48 +895,34 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
             continue
 
         key = (rec["ein"], rec["tax_period"])
-        dedup[key] = rec  # later rows overwrite earlier ones
+        dedup[key] = rec
 
     records = list(dedup.values())
-
     print(
-        f"[{filename}] {len(records)} records to upsert, "
-        f"{skipped} skipped (filtered/invalid)",
+        f"[{filename}] {len(records)} records to upsert, {skipped} skipped",
         flush=True,
     )
 
     if not records:
         return
 
-    # Upsert in batches
-    batch_size = 2000
-    total_upserted = 0
-
     if dry_run:
         print(f"[{filename}] DRY RUN — would upsert {len(records)} records")
         return
 
-    FILING_COLS = [
-        "ein", "tax_period", "fiscal_year",
-        "total_revenue", "total_expenses", "total_assets", "total_liabilities", "total_net_assets",
-        "contributions", "program_revenue", "investment_income", "other_revenue",
-        "program_expenses", "ga_expenses", "fundraising_expenses",
-        "cash_equiv", "st_investments", "lt_investments", "ppe",
-        "unrestr_net_assets", "restr_net_assets", "source_file", "form_type",
-    ]
-
-    # Back-fill form_type for records that don't have it (990 normalizer)
+    # back-fill form_type
     for r in records:
         r.setdefault("form_type", "990")
 
+    batch_size = 1000
+    total_upserted = 0
     i = 0
+
     while i < len(records):
-        batch = records[i : i + batch_size]
-        row_tuples = [tuple(r[c] for c in FILING_COLS) for r in batch]
+        batch = records[i: i + batch_size]
         try:
-            with conn.cursor() as cur:
-                psycopg2.extras.execute_values(cur, UPSERT_FILING_SQL, row_tuples, page_size=batch_size)
-            conn.commit()
+            upsert_filings(conn, batch, dry_run=False)
+            upsert_raw(conn, batch, dry_run=False)
             total_upserted += len(batch)
             i += len(batch)
             print(f"[{filename}] {total_upserted}/{len(records)} upserted ...", flush=True)
@@ -823,7 +937,7 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
             else:
                 raise
 
-    print(f"[{filename}] Upserted {total_upserted} records", flush=True)
+    print(f"[{filename}] Done: {total_upserted} records upserted", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -832,22 +946,15 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
 
 
 def _file_sort_key(f: Path) -> int:
-    """
-    Return a numeric sort key so files process in chronological order.
-    py12 → 12, py13 → 13, ..., 15eofinextract990 → 15, 18eoextract990 → 18, etc.
-    """
     name = f.name
-    # py12_990.dat  → extract leading digits after 'py'
     if name.startswith("py") and name[2:4].isdigit():
         return int(name[2:4])
-    # 15eofinextract990.dat / 18eoextract990.csv → leading two digits
     if name[:2].isdigit():
         return int(name[:2])
     return 99
 
 
 def discover_files(data_dir: Path) -> list[Path]:
-    """Return all recognised 990, 990-EZ, and 990-PF source files sorted oldest-to-newest."""
     result = []
     for f in data_dir.iterdir():
         name = f.name
@@ -862,33 +969,13 @@ def discover_files(data_dir: Path) -> list[Path]:
 
 def main() -> None:
     load_dotenv()
+    load_dotenv(Path(__file__).parent.parent / "apps/web/.env.local", override=True)
 
     parser = argparse.ArgumentParser(description="Ingest IRS SOI 990 data into Postgres")
-    parser.add_argument(
-        "--data-dir",
-        default="../docs/990_data/file_data",
-        help="Path to directory containing .dat and .csv source files",
-    )
-    parser.add_argument(
-        "--eobmf",
-        default=None,
-        help="Path to IRS EO BMF CSV file (optional)",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Parse files and report counts without writing to the database",
-    )
-    parser.add_argument(
-        "--files",
-        nargs="+",
-        metavar="FILE",
-        default=None,
-        help=(
-            "Explicit filenames to ingest (e.g. 21eoextract990.csv 22eoextract990.csv). "
-            "Omit to process all recognised files in --data-dir."
-        ),
-    )
+    parser.add_argument("--data-dir", default="../docs/990_data/file_data")
+    parser.add_argument("--eobmf", default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--files", nargs="+", metavar="FILE", default=None)
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).expanduser().resolve()
@@ -898,22 +985,15 @@ def main() -> None:
 
     database_url = os.environ.get("DATABASE_URL")
     if not database_url and not args.dry_run:
-        print(
-            "ERROR: DATABASE_URL environment variable is not set. "
-            "Set it or pass --dry-run.",
-            file=sys.stderr,
-        )
+        print("ERROR: DATABASE_URL not set.", file=sys.stderr)
         sys.exit(1)
 
     conn = None
     if not args.dry_run:
-        print(f"Connecting to database ...")
+        print("Connecting to database ...")
         conn = psycopg2.connect(database_url)
         print("Connected.")
 
-    # EO BMF first so that organizations exist before filings reference them.
-    # (The schema has a FK; if you want to load filings without org records,
-    #  temporarily drop the FK or load BMF first.)
     if args.eobmf:
         eobmf_path = Path(args.eobmf).expanduser().resolve()
         if not eobmf_path.is_file():
@@ -922,7 +1002,6 @@ def main() -> None:
         ingest_eobmf(eobmf_path, conn, dry_run=args.dry_run, database_url=database_url)
 
     if args.files:
-        # Explicit list: resolve each name against data_dir, validate, preserve order.
         files = []
         for name in args.files:
             p = data_dir / name
