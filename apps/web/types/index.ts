@@ -102,6 +102,8 @@ export interface Filing {
   deferred_revenue: number | null
   tax_exempt_bonds: number | null
   tax_exempt_bonds_liability: number | null
+  secured_mortgages: number | null
+  unsecured_notes: number | null
   escrow_liabilities: number | null
   loans_officers: number | null
   other_liabilities: number | null

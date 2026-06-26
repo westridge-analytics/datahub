@@ -6,14 +6,15 @@ export function calcM1(filing: Filing): number | null {
   return Math.round(filing.unrestr_net_assets - filing.ppe)
 }
 
-// High estimate: Low + deferred revenue + tax-exempt bonds liability
-// (secured/unsecured notes not currently stored in DB)
+// High estimate: Low + deferred revenue + tax-exempt bonds + secured mortgages + unsecured notes
 export function calcM3(filing: Filing): number | null {
   const low = calcM1(filing)
   if (low === null) return null
   const deferred = filing.deferred_revenue ?? 0
   const bonds = filing.tax_exempt_bonds_liability ?? filing.tax_exempt_bonds ?? 0
-  return Math.round(low + deferred + bonds)
+  const secured = filing.secured_mortgages ?? 0
+  const unsecured = filing.unsecured_notes ?? 0
+  return Math.round(low + deferred + bonds + secured + unsecured)
 }
 
 // Midpoint: average of Low and High
