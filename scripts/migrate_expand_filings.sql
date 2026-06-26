@@ -55,6 +55,7 @@ ALTER TABLE filings ADD COLUMN IF NOT EXISTS temp_restricted_net_assets    INTEG
 ALTER TABLE filings ADD COLUMN IF NOT EXISTS perm_restricted_net_assets    INTEGER;
 ALTER TABLE filings ADD COLUMN IF NOT EXISTS secured_mortgages             BIGINT;
 ALTER TABLE filings ADD COLUMN IF NOT EXISTS unsecured_notes               BIGINT;
+ALTER TABLE filings ADD COLUMN IF NOT EXISTS deferred_revenue              BIGINT;
 
 -- ── Filing / org classification ───────────────────────────────────────────────
 ALTER TABLE filings ADD COLUMN IF NOT EXISTS subsection_code          TEXT;
