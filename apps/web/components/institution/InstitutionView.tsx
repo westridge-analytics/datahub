@@ -279,7 +279,7 @@ export default function InstitutionView({
   const methodDefs = [
     { key: 'M1' as const, label: 'Low', formula: 'Unrestricted NA − PP&E', value: methods.m1 },
     { key: 'M2' as const, label: 'Midpoint', formula: 'Avg(Low, High)', value: methods.m2 },
-    { key: 'M3' as const, label: 'High', formula: 'Low + Deferred Rev + Tax-Exempt Bonds', value: methods.m3 },
+    { key: 'M3' as const, label: 'High', formula: 'Low + Deferred Rev + Bonds + Mortgages + Notes', value: methods.m3 },
   ]
 
   const prevFiling = selectedFiling
