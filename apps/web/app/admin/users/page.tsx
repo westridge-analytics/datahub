@@ -209,13 +209,13 @@ export default function UsersPage() {
         <Modal title="Add User" onClose={() => setAddOpen(false)}>
           <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <Field label="Email">
-              <input type="email" required value={addEmail} onChange={(e) => setAddEmail(e.target.value)} style={inputStyle} />
+              <input type="email" required value={addEmail} onChange={(e) => setAddEmail(e.target.value)} autoComplete="off" style={inputStyle} />
             </Field>
             <Field label="Name (optional)">
-              <input type="text" value={addName} onChange={(e) => setAddName(e.target.value)} style={inputStyle} />
+              <input type="text" value={addName} onChange={(e) => setAddName(e.target.value)} autoComplete="off" style={inputStyle} />
             </Field>
             <Field label="Password">
-              <input type="password" required value={addPassword} onChange={(e) => setAddPassword(e.target.value)} style={inputStyle} />
+              <input type="password" required value={addPassword} onChange={(e) => setAddPassword(e.target.value)} autoComplete="new-password" style={inputStyle} />
             </Field>
             <Field label="Role">
               <select value={addRole} onChange={(e) => setAddRole(e.target.value)} style={inputStyle}>
