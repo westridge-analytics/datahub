@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node ../../scripts/test-api.mjs",
-    "test:ci": "next dev &>/tmp/nextdev-test.log & sleep 8 && node ../../scripts/test-api.mjs; STATUS=$?; kill %1 2>/dev/null; exit $STATUS"
+    "test:unit": "node --test lib/metrics/*.test.ts",
+    "test": "npm run test:unit && node ../../scripts/test-api.mjs",
+    "test:ci": "npm run test:unit && { next dev &>/tmp/nextdev-test.log & sleep 8 && node ../../scripts/test-api.mjs; STATUS=$?; kill %1 2>/dev/null; exit $STATUS; }"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

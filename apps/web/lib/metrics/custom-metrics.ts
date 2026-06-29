@@ -1,9 +1,21 @@
 import type { Filing } from '@/types'
 
+// Neon returns BIGINT columns as strings; coerce to number (null/undefined → null)
+function num(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+// Coerce to number, treating null/undefined as 0 (for additive components)
+function n0(v: number | string | null | undefined): number {
+  return num(v) ?? 0
+}
+
 // Row 90: total expenses / 12
 export function calcMonthlyOpex(f: Filing): number | null {
-  if (f.total_expenses === null) return null
-  return f.total_expenses / 12
+  const exp = num(f.total_expenses)
+  if (exp === null) return null
+  return exp / 12
 }
 
 // Row 94: midpoint unrestricted liquidity / monthly opex
@@ -16,14 +28,15 @@ export function calcReserveCoverage(midpoint: number | null, f: Filing): number 
 // Row 96: personnel costs / total expenses
 // Covers officer comp, other salaries, pension, benefits, payroll taxes (Part IX rows 5-10)
 export function calcPersonnelPct(f: Filing): number | null {
-  if (!f.total_expenses) return null
+  const exp = num(f.total_expenses)
+  if (!exp) return null
   const personnel =
-    (f.comp_officers ?? 0) +
-    (f.comp_other_salaries ?? 0) +
-    (f.pension_contributions ?? 0) +
-    (f.employee_benefits ?? 0) +
-    (f.payroll_taxes ?? 0)
-  return personnel / f.total_expenses
+    n0(f.comp_officers) +
+    n0(f.comp_other_salaries) +
+    n0(f.pension_contributions) +
+    n0(f.employee_benefits) +
+    n0(f.payroll_taxes)
+  return personnel / exp
 }
 
 // Row 104: sum of revenue lines labeled "Earned"
@@ -32,24 +45,27 @@ export function calcPersonnelPct(f: Filing): number | null {
 export function calcEarned(f: Filing): number | null {
   if (f.program_revenue === null) return null
   return (
-    (f.program_revenue ?? 0) +
-    (f.royalties_income ?? 0) +
-    (f.net_rental_income ?? 0) +
-    (f.net_gaming_income ?? 0)
+    n0(f.program_revenue) +
+    n0(f.royalties_income) +
+    n0(f.net_rental_income) +
+    n0(f.net_gaming_income)
   )
 }
 
 // Row 106: sum of revenue lines labeled "Contributed"
 export function calcContributed(f: Filing): number | null {
   if (f.contributions === null) return null
-  return (f.contributions ?? 0) + (f.net_fundraising_income ?? 0)
+  return n0(f.contributions) + n0(f.net_fundraising_income)
 }
 
 // Row 108: current year temp restricted net assets minus prior year
 export function calcYoYRestrictionChange(current: Filing, prev: Filing | null): number | null {
-  if (current.temp_restricted_net_assets === null) return null
-  if (prev === null || prev.temp_restricted_net_assets === null) return null
-  return current.temp_restricted_net_assets - prev.temp_restricted_net_assets
+  const cur = num(current.temp_restricted_net_assets)
+  if (cur === null) return null
+  if (prev === null) return null
+  const p = num(prev.temp_restricted_net_assets)
+  if (p === null) return null
+  return cur - p
 }
 
 // Row 110: if restriction change > $100k, net it out of contributed (new restrictions absorbed donor dollars)
