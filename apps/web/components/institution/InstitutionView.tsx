@@ -437,6 +437,7 @@ export default function InstitutionView({
             border: `1px solid ${C.border}`,
             borderRadius: '8px',
             padding: '12px 16px',
+            flexShrink: 0,
           }}
         >
           <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.textTertiary, marginBottom: '10px' }}>
@@ -480,6 +481,7 @@ export default function InstitutionView({
             border: `1px solid ${C.border}`,
             borderRadius: '8px',
             overflow: 'hidden',
+            flexShrink: 0,
           }}
         >
           <div
