@@ -166,3 +166,18 @@ describe('Pagination', () => {
     assert.equal(overlap.length, 0, `${overlap.length} rows appear on both pages`)
   })
 })
+
+describe('BIGINT-as-number contract', () => {
+  // Neon returns int8/BIGINT as strings by default; lib/db.ts installs a global
+  // parser so financial columns come back as JS numbers. If that regresses,
+  // arithmetic silently concatenates ("number" + "205730") and charts break.
+  // /api/filings is public, so this exercises the parser end-to-end through the
+  // shared DB layer that every route (incl. the auth-gated visualization
+  // endpoints) relies on.
+  test('filings: financial fields are numbers, not strings', async () => {
+    const json = await filings()
+    const row = json.data.find(r => r.total_revenue != null)
+    assert.equal(typeof row.total_revenue, 'number', 'total_revenue should be a number')
+    assert.ok(json.total > 1_000_000 && typeof json.total === 'number', 'count total should be a number')
+  })
+})

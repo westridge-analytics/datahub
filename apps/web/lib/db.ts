@@ -1,4 +1,13 @@
-import { neon, type NeonQueryFunction } from '@neondatabase/serverless'
+import { neon, types, type NeonQueryFunction } from '@neondatabase/serverless'
+
+// Neon (like node-postgres) returns BIGINT/int8 as strings to preserve precision
+// beyond 2^53. All 990 financial values fit comfortably in a JS number, and
+// returning strings caused silent bugs (`number + "205730"` concatenated, charts
+// couldn't plot). Parse int8 as Number globally so every query path is safe.
+// int8 OID = 20. COUNT(*) also returns int8 and is parsed here too.
+types.setTypeParser(types.builtins.INT8, (val: string | null) =>
+  val === null ? null : Number(val),
+)
 
 // sql is a tagged template function; resolved lazily so the module is safe to import at build time.
 export function getSql(): NeonQueryFunction<false, false> {
