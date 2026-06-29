@@ -265,10 +265,16 @@ export default function InstitutionView({
     return sortedFilings.slice(Math.max(0, end - 5), end)
   })()
 
+  // Neon returns BIGINT as strings; Recharts needs numbers to plot
+  const toNum = (v: number | string | null): number | null => {
+    if (v === null || v === undefined) return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
   const chartData = chartFilings.map(f => ({
     year: f.fiscal_year,
-    revenue: f.total_revenue,
-    expenses: f.total_expenses,
+    revenue: toNum(f.total_revenue),
+    expenses: toNum(f.total_expenses),
   }))
 
   // Method cards
