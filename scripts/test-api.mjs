@@ -131,6 +131,12 @@ describe('Filters', () => {
     assert.ok(json.data.every(r => r.state === 'WI'), 'non-WI row in state filter results')
   })
 
+  test('multi-value state filter (comma-separated) returns only those states', async () => {
+    const json = await filings({ state: 'WI,MN' })
+    assert.ok(json.data.length > 0, 'no WI/MN results')
+    assert.ok(json.data.every(r => r.state === 'WI' || r.state === 'MN'), 'row outside WI/MN in multi-state filter results')
+  })
+
   test('sector filter returns only matching NTEE category', async () => {
     const json = await filings({ ntee_category: 'Education' })
     assert.ok(json.data.length > 0, 'no Education results')
@@ -164,6 +170,30 @@ describe('Pagination', () => {
     const eins1 = new Set(p1.data.map(r => r.ein + r.fiscal_year))
     const overlap = p2.data.filter(r => eins1.has(r.ein + r.fiscal_year))
     assert.equal(overlap.length, 0, `${overlap.length} rows appear on both pages`)
+  })
+})
+
+describe('Export', () => {
+  // /api/export requires a logged-in session, so this suite can't drive the
+  // full authenticated download. It guards the specific regression that
+  // shipped previously: the route only exported POST, so GET (and, before
+  // the frontend/backend contract was fixed, any mismatched request) came
+  // back as 405 Method Not Allowed instead of reaching the auth check.
+  test('GET with filters is routed (not 405) — auth redirect, not method-not-allowed', async () => {
+    const qs = new URLSearchParams({ format: 'csv', state: 'WI', sort_by: 'total_revenue', sort_dir: 'desc' })
+    const res = await fetch(`${BASE}/api/export?${qs}`, { redirect: 'manual' })
+    assert.notEqual(res.status, 405, 'export route rejected GET — frontend/backend method mismatch has regressed')
+    assert.ok([302, 307, 200].includes(res.status), `expected an auth redirect or success, got ${res.status}`)
+  })
+
+  // The Institution page's Export link (`/api/export?ein=...`) predates the
+  // format/sort_by params and was broken the same way (GET on a POST-only
+  // route). Same auth-gated assertion, just via the ein-scoped path.
+  test('GET with ein param is routed (not 405)', async () => {
+    const qs = new URLSearchParams({ format: 'csv', ein: '53-0196605', sort_by: 'fiscal_year', sort_dir: 'desc' })
+    const res = await fetch(`${BASE}/api/export?${qs}`, { redirect: 'manual' })
+    assert.notEqual(res.status, 405, 'ein-scoped export rejected GET')
+    assert.ok([302, 307, 200].includes(res.status), `expected an auth redirect or success, got ${res.status}`)
   })
 })
 

@@ -1,27 +1,7 @@
 import { type NextRequest } from 'next/server'
-import { sql, rawQuery } from '@/lib/db'
+import { rawQuery } from '@/lib/db'
 import * as XLSX from 'xlsx'
-
-const ALLOWED_SORT_COLUMNS = new Set([
-  'total_revenue',
-  'total_expenses',
-  'net_income',
-  'total_assets',
-  'total_net_assets',
-  'fiscal_year',
-  'name',
-])
-
-interface ExportFilters {
-  search?: string
-  state?: string
-  sector?: string
-  cohort_id?: number
-  year_min?: number
-  year_max?: number
-  sort_by?: string
-  sort_dir?: string
-}
+import { ALLOWED_SORT_COLUMNS, parseFilingFilters } from '@/lib/filing-filters'
 
 interface ExportRow {
   ein: string
@@ -37,30 +17,34 @@ interface ExportRow {
   total_net_assets: number | null
 }
 
-export async function POST(request: NextRequest) {
-  let body: { format?: string; filters?: ExportFilters }
-  try {
-    body = await request.json()
-  } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+// Accepts the exact same query-string contract as GET /api/filings (plus
+// `format`), so "export" always means "export what's on screen right now."
+export async function GET(request: NextRequest) {
+  const sp = request.nextUrl.searchParams
 
-  const format = body.format
+  const format = sp.get('format')
   if (format !== 'xlsx' && format !== 'csv') {
     return Response.json({ error: 'format must be "xlsx" or "csv"' }, { status: 400 })
   }
 
-  const filters: ExportFilters = body.filters ?? {}
-  const sortBy = filters.sort_by ?? 'total_revenue'
-  const sortDir = filters.sort_dir === 'asc' ? 'ASC' : 'DESC'
+  const search = sp.get('search') ?? ''
+  const sortBy = sp.get('sort_by') ?? 'total_revenue'
+  const sortDir = sp.get('sort_dir') === 'asc' ? 'ASC' : 'DESC'
 
   if (!ALLOWED_SORT_COLUMNS.has(sortBy)) {
     return Response.json({ error: `Invalid sort_by column: ${sortBy}` }, { status: 400 })
   }
 
-  const cohortId = filters.cohort_id != null ? Number(filters.cohort_id) : null
-  if (cohortId !== null && isNaN(cohortId)) {
+  const { clauses, params, cohortId } = parseFilingFilters(sp)
+  if (sp.get('cohort_id') && cohortId !== null && isNaN(cohortId)) {
     return Response.json({ error: 'cohort_id must be an integer' }, { status: 400 })
+  }
+
+  // Institution page exports a single org's full filing history by EIN.
+  const ein = sp.get('ein')
+  if (ein) {
+    params.push(ein)
+    clauses.push(`f.ein = $${params.length}`)
   }
 
   try {
@@ -71,24 +55,27 @@ export async function POST(request: NextRequest) {
         ? 'o.name'
         : `f.${sortBy}`
 
-    const params: unknown[] = []
-    const clauses: string[] = []
+    let whereExtra = ''
+    let fromClause = 'FROM filings f\n      JOIN organizations o ON o.ein = f.ein'
+    let queryParams = params
 
-    function p(v: unknown): string {
-      params.push(v)
-      return `$${params.length}`
+    if (search) {
+      const trimmed = search.trim()
+      // Search params must occupy $1/$2 (matched_eins CTE); shift filter clauses
+      // built above (which reference $1..$N against `params`) up by 2.
+      const shiftedClauses = clauses.map(c => c.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n, 10) + 2}`))
+      queryParams = [trimmed, `%${trimmed}%`, ...params]
+      fromClause = `FROM filings f
+      JOIN (
+        SELECT ein FROM organizations WHERE name_vec @@ websearch_to_tsquery('english', $1)
+        UNION
+        SELECT ein FROM filings WHERE ein ILIKE $2
+      ) m ON m.ein = f.ein
+      JOIN organizations o ON o.ein = f.ein`
+      whereExtra = shiftedClauses.length > 0 ? `AND ${shiftedClauses.join(' AND ')}` : ''
+    } else {
+      whereExtra = clauses.length > 0 ? `AND ${clauses.join(' AND ')}` : ''
     }
-
-    if (filters.search) {
-      const ph = p(`%${filters.search}%`)
-      clauses.push(`(o.name ILIKE ${ph} OR f.ein ILIKE ${ph})`)
-    }
-    if (filters.state) clauses.push(`o.state = ${p(filters.state)}`)
-    if (filters.sector) clauses.push(`o.sector = ${p(filters.sector)}`)
-    if (filters.year_min != null) clauses.push(`f.fiscal_year >= ${p(filters.year_min)}`)
-    if (filters.year_max != null) clauses.push(`f.fiscal_year <= ${p(filters.year_max)}`)
-
-    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
 
     const cohortJoin = cohortId !== null
       ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}`
@@ -110,15 +97,16 @@ export async function POST(request: NextRequest) {
         (f.total_revenue - f.total_expenses) AS net_income,
         f.total_assets,
         f.total_net_assets
-      FROM filings f
-      JOIN organizations o ON o.ein = f.ein
+      ${fromClause}
       ${cohortJoin}
-      ${whereClause}
+      WHERE TRUE ${whereExtra}
       ORDER BY ${orderExpr} ${sortDir} NULLS LAST
       LIMIT 50000
     `
 
-    const rows = (await rawQuery(queryText, params)) as ExportRow[]
+    const rows = (await rawQuery(queryText, queryParams)) as ExportRow[]
+    const einSlug = ein?.replace(/[^0-9-]/g, '')
+    const filenameBase = einSlug ? `990-export-${einSlug}` : '990-export'
 
     if (format === 'csv') {
       const header = [
@@ -157,7 +145,7 @@ export async function POST(request: NextRequest) {
         status: 200,
         headers: {
           'Content-Type': 'text/csv',
-          'Content-Disposition': 'attachment; filename="990-export.csv"',
+          'Content-Disposition': `attachment; filename="${filenameBase}.csv"`,
         },
       })
     } else {
@@ -193,12 +181,12 @@ export async function POST(request: NextRequest) {
         status: 200,
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'Content-Disposition': 'attachment; filename="990-export.xlsx"',
+          'Content-Disposition': `attachment; filename="${filenameBase}.xlsx"`,
         },
       })
     }
   } catch (err) {
-    console.error('[POST /api/export]', err)
+    console.error('[GET /api/export]', err)
     return Response.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

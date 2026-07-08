@@ -382,11 +382,13 @@ export default function MainDataTable() {
   // Dropdowns
   const [filterOpen, setFilterOpen] = useState(false)
   const [columnPickerOpen, setColumnPickerOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   const [tagModalOpen, setTagModalOpen] = useState(false)
   const [cohorts, setCohorts] = useState<Cohort[]>([])
 
   const filterRef = useRef<HTMLDivElement>(null)
   const columnRef = useRef<HTMLDivElement>(null)
+  const exportRef = useRef<HTMLDivElement>(null)
 
   // Debounce search
   useEffect(() => {
@@ -452,6 +454,17 @@ export default function MainDataTable() {
     return () => document.removeEventListener('mousedown', handler)
   }, [filterOpen])
 
+  // Close export dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false)
+      }
+    }
+    if (exportOpen) document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [exportOpen])
+
   // Sort handler
   function handleSort(col: string) {
     if (!SORTABLE.has(col)) return
@@ -507,23 +520,34 @@ export default function MainDataTable() {
   }
 
   // Export
-  async function handleExport() {
-    const body = { search: debouncedSearch, filters, sortBy, sortDir }
-    const res = await fetch('/api/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) return
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const cd = res.headers.get('content-disposition') ?? ''
-    const match = cd.match(/filename="?([^"]+)"?/)
-    a.download = match ? match[1] : 'export.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+  const [exportLoading, setExportLoading] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  async function handleExport(format: 'csv' | 'xlsx') {
+    setExportLoading(true)
+    setExportError(null)
+    try {
+      const qs = buildParams({ search: debouncedSearch, filters, sortBy, sortDir, page: 1, pageSize: 1 })
+      const res = await fetch(`/api/export?${qs}&format=${format}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        setExportError(body?.error ?? `Export failed (${res.status})`)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const cd = res.headers.get('content-disposition') ?? ''
+      const match = cd.match(/filename="?([^"]+)"?/)
+      a.download = match ? match[1] : `export.${format}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setExportError('Export failed — network error')
+    } finally {
+      setExportLoading(false)
+    }
   }
 
   // Cohort tagging
@@ -765,9 +789,72 @@ export default function MainDataTable() {
           </div>
 
           {/* Export */}
-          <button onClick={handleExport} style={btnStyle}>
-            Export ↓
-          </button>
+          <div style={{ position: 'relative' }} ref={exportRef}>
+            <button
+              onClick={() => setExportOpen((o) => !o)}
+              disabled={exportLoading}
+              style={{ ...btnStyle, opacity: exportLoading ? 0.6 : 1 }}
+            >
+              {exportLoading ? 'Exporting…' : 'Export ↓'}
+            </button>
+            {exportOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  zIndex: 20,
+                  background: '#FFFFFF',
+                  border: '1px solid #BDD3DC',
+                  borderRadius: '6px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  minWidth: '140px',
+                  overflow: 'hidden',
+                }}
+              >
+                {(['csv', 'xlsx'] as const).map((format) => (
+                  <button
+                    key={format}
+                    onClick={() => { setExportOpen(false); handleExport(format) }}
+                    disabled={exportLoading}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: '#3D5A63',
+                      backgroundColor: '#FFFFFF',
+                      border: 'none',
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Export as {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {exportError && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  zIndex: 20,
+                  fontSize: '11px',
+                  color: '#B3413C',
+                  background: '#FDECEA',
+                  border: '1px solid #F3C7C3',
+                  borderRadius: '5px',
+                  padding: '6px 10px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {exportError}
+              </div>
+            )}
+          </div>
 
           {/* Tag selected */}
           {selectedEins.size > 0 && (

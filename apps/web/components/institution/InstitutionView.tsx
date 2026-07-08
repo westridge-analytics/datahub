@@ -305,7 +305,7 @@ export default function InstitutionView({
     contribPct: calcContribPct(selectedFiling, prevFiling),
   } : null
 
-  const exportHref = `/api/export?ein=${organization.ein}`
+  const exportHref = `/api/export?ein=${encodeURIComponent(organization.ein)}&format=csv&sort_by=fiscal_year&sort_dir=desc`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
