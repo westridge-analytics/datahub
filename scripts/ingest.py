@@ -797,9 +797,17 @@ def decode_sector(ntee_code: str | None) -> str:
     return NTEE_SECTOR_MAP.get(first, "Unknown")
 
 
-def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url: str | None = None) -> None:
+def ingest_eobmf(
+    filepath: str | Path,
+    conn,
+    dry_run: bool = False,
+    database_url: str | None = None,
+    ein_allowlist: set[str] | None = None,
+) -> None:
     filepath = Path(filepath)
     print(f"\n[EO BMF] Reading {filepath.name} ...")
+    if ein_allowlist is not None:
+        print(f"[EO BMF] Restricting to {len(ein_allowlist)} EINs referenced by loaded filings")
 
     records = []
     skipped = 0
@@ -813,6 +821,9 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url
             row = {k.lower().strip(): v for k, v in raw.items()}
             ein = fmt_ein(row.get("ein", ""))
             if ein is None:
+                skipped += 1
+                continue
+            if ein_allowlist is not None and ein not in ein_allowlist:
                 skipped += 1
                 continue
             name = str(row.get("name", "") or "").strip()
@@ -863,10 +874,21 @@ def ingest_eobmf(filepath: str | Path, conn, dry_run: bool = False, database_url
 # ---------------------------------------------------------------------------
 
 
-def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = None) -> None:
+def normalise_file_records(
+    filepath: Path,
+    min_revenue: float | None = None,
+    min_fiscal_year: int | None = None,
+    max_fiscal_year: int | None = None,
+) -> list[dict]:
+    """
+    Read and normalise a single source file into deduped filing records,
+    applying the optional total_revenue floor and fiscal_year range. Source
+    files are labelled by extract year, not fiscal year, so late filers in a
+    given file can carry much older fiscal years — min/max_fiscal_year filters
+    those out. Pure/no DB access — used both by ingest_file() and by the
+    EIN-allowlist pre-pass.
+    """
     filename = filepath.name
-    print(f"\n[{filename}] Reading ...", flush=True)
-
     space_delim    = is_space_delimited(filename)
     space_delim_ez = is_space_delimited_ez(filename)
     space_delim_pf = is_space_delimited_pf(filename)
@@ -878,10 +900,7 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
     else:
         raw_rows = read_csv(filepath)
 
-    print(f"[{filename}] {len(raw_rows)} rows read", flush=True)
-
     dedup: dict[tuple, dict] = {}
-    skipped = 0
 
     for raw in raw_rows:
         if space_delim:
@@ -898,15 +917,60 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
             rec = normalise_csv(raw, filename)
 
         if rec is None:
-            skipped += 1
+            continue
+
+        if min_revenue is not None:
+            revenue = rec.get("total_revenue")
+            if revenue is None or revenue <= min_revenue:
+                continue
+
+        if min_fiscal_year is not None and rec.get("fiscal_year", 0) < min_fiscal_year:
+            continue
+
+        if max_fiscal_year is not None and rec.get("fiscal_year", 0) > max_fiscal_year:
             continue
 
         key = (rec["ein"], rec["tax_period"])
         dedup[key] = rec
 
-    records = list(dedup.values())
+    return list(dedup.values())
+
+
+def collect_eins(
+    files: list[Path],
+    min_revenue: float | None = None,
+    min_fiscal_year: int | None = None,
+    max_fiscal_year: int | None = None,
+) -> set[str]:
+    """Dry-run pass over filing files to gather the EIN set that will be upserted."""
+    eins: set[str] = set()
+    for filepath in files:
+        records = normalise_file_records(filepath, min_revenue=min_revenue,
+                                          min_fiscal_year=min_fiscal_year, max_fiscal_year=max_fiscal_year)
+        eins.update(r["ein"] for r in records)
+    return eins
+
+
+def ingest_file(
+    filepath: Path,
+    conn,
+    dry_run: bool,
+    database_url: str | None = None,
+    min_revenue: float | None = None,
+    min_fiscal_year: int | None = None,
+    max_fiscal_year: int | None = None,
+    skip_raw: bool = False,
+) -> None:
+    filename = filepath.name
+    print(f"\n[{filename}] Reading ...", flush=True)
+
+    records = normalise_file_records(filepath, min_revenue=min_revenue,
+                                      min_fiscal_year=min_fiscal_year, max_fiscal_year=max_fiscal_year)
     print(
-        f"[{filename}] {len(records)} records to upsert, {skipped} skipped",
+        f"[{filename}] {len(records)} records to upsert"
+        + (f" (revenue > {min_revenue:,.0f} filter applied)" if min_revenue is not None else "")
+        + (f" (fiscal_year >= {min_fiscal_year} filter applied)" if min_fiscal_year is not None else "")
+        + (f" (fiscal_year <= {max_fiscal_year} filter applied)" if max_fiscal_year is not None else ""),
         flush=True,
     )
 
@@ -929,7 +993,8 @@ def ingest_file(filepath: Path, conn, dry_run: bool, database_url: str | None = 
         batch = records[i: i + batch_size]
         try:
             upsert_filings(conn, batch, dry_run=False)
-            upsert_raw(conn, batch, dry_run=False)
+            if not skip_raw:
+                upsert_raw(conn, batch, dry_run=False)
             total_upserted += len(batch)
             i += len(batch)
             print(f"[{filename}] {total_upserted}/{len(records)} upserted ...", flush=True)
@@ -983,6 +1048,20 @@ def main() -> None:
     parser.add_argument("--eobmf", default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--files", nargs="+", metavar="FILE", default=None)
+    parser.add_argument("--min-revenue", type=float, default=None,
+                         help="Only ingest filings with total_revenue over this amount")
+    parser.add_argument("--min-fiscal-year", type=int, default=None,
+                         help="Only ingest filings with fiscal_year >= this value "
+                              "(source files are labelled by extract year, not fiscal year, "
+                              "so late filers can carry much older fiscal years)")
+    parser.add_argument("--max-fiscal-year", type=int, default=None,
+                         help="Only ingest filings with fiscal_year <= this value "
+                              "(useful for dropping a mostly-unfiled trailing year)")
+    parser.add_argument("--skip-raw", action="store_true",
+                         help="Don't populate filings_raw (unused by the app; saves significant DB size)")
+    parser.add_argument("--restrict-eobmf-to-filings", action="store_true",
+                         help="When used with --eobmf and --files, only load organizations "
+                              "whose EIN appears in the filtered filing files")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).expanduser().resolve()
@@ -1001,13 +1080,6 @@ def main() -> None:
         conn = psycopg2.connect(database_url)
         print("Connected.")
 
-    if args.eobmf:
-        eobmf_path = Path(args.eobmf).expanduser().resolve()
-        if not eobmf_path.is_file():
-            print(f"ERROR: EO BMF file not found: {eobmf_path}", file=sys.stderr)
-            sys.exit(1)
-        ingest_eobmf(eobmf_path, conn, dry_run=args.dry_run, database_url=database_url)
-
     if args.files:
         files = []
         for name in args.files:
@@ -1016,19 +1088,43 @@ def main() -> None:
                 print(f"ERROR: file not found: {p}", file=sys.stderr)
                 sys.exit(1)
             files.append(p)
+    elif args.eobmf:
+        # --eobmf alone means "just load this BMF file" — don't also sweep
+        # every filing file in the directory. Pass --files explicitly to do both.
+        files = []
     else:
         files = discover_files(data_dir)
 
+    if args.eobmf:
+        eobmf_path = Path(args.eobmf).expanduser().resolve()
+        if not eobmf_path.is_file():
+            print(f"ERROR: EO BMF file not found: {eobmf_path}", file=sys.stderr)
+            sys.exit(1)
+        ein_allowlist = None
+        if args.restrict_eobmf_to_filings:
+            if not files:
+                print("ERROR: --restrict-eobmf-to-filings requires --files", file=sys.stderr)
+                sys.exit(1)
+            print("[EO BMF] Pre-pass: collecting EINs from filing files ...")
+            ein_allowlist = collect_eins(files, min_revenue=args.min_revenue,
+                                         min_fiscal_year=args.min_fiscal_year, max_fiscal_year=args.max_fiscal_year)
+            print(f"[EO BMF] {len(ein_allowlist)} distinct EINs will be kept")
+        ingest_eobmf(eobmf_path, conn, dry_run=args.dry_run, database_url=database_url,
+                     ein_allowlist=ein_allowlist)
+
     if not files:
-        print(f"No recognised source files found in {data_dir}", file=sys.stderr)
-        sys.exit(1)
+        if not args.eobmf:
+            print(f"No recognised source files found in {data_dir}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print(f"\nFound {len(files)} source files in {data_dir}")
+        for f in files:
+            print(f"  {f.name}")
 
-    print(f"\nFound {len(files)} source files in {data_dir}")
-    for f in files:
-        print(f"  {f.name}")
-
-    for filepath in files:
-        ingest_file(filepath, conn, dry_run=args.dry_run, database_url=database_url)
+        for filepath in files:
+            ingest_file(filepath, conn, dry_run=args.dry_run, database_url=database_url,
+                        min_revenue=args.min_revenue, min_fiscal_year=args.min_fiscal_year,
+                        max_fiscal_year=args.max_fiscal_year, skip_raw=args.skip_raw)
 
     if conn:
         conn.close()
