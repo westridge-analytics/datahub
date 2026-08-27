@@ -8,6 +8,19 @@ import { detectFormat, isForm990Row, mapRow, type FileFormat, type MappedRow } f
 
 const BATCH_SIZE = 500
 const MAX_LOG_LINES = 20
+const PREFLIGHT_CHUNK = 2000
+
+// Cap on simultaneous requests to the API. Without one, a 340,000-row extract
+// fans out to ~170 preflight requests and ~680 batch POSTs all at once. On
+// localhost the browser's own HTTP/1.1 six-connection limit hides this; over
+// HTTP/2 in production they really do all go in flight, and Neon starts
+// refusing connections.
+const MAX_INFLIGHT = 5
+
+// This screen loads the IRS SOI annual extracts, which are the authoritative
+// source. The e-file XML archive path (data_source 'efile_xml') arrives in a
+// later phase and will set this per file.
+const DATA_SOURCE = 'soi_extract'
 
 const KNOWN_PATTERNS = [
   'py12_990.dat',
@@ -31,6 +44,20 @@ function isKnownFilename(name: string): boolean {
     lower === 'py12_990.dat'
 }
 
+/** Run tasks with at most `limit` in flight, preserving completion effects. */
+async function pooled<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (next < tasks.length) {
+      const i = next++
+      results[i] = await tasks[i]()
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -47,13 +74,32 @@ function formatDuration(ms: number): string {
 
 // ── types ────────────────────────────────────────────────────────────────────
 
-type Status = 'idle' | 'parsing' | 'uploading' | 'done' | 'error'
+type Status = 'idle' | 'checking' | 'parsing' | 'uploading' | 'done' | 'error'
+
+type ConflictMode = 'skip' | 'overwrite'
 
 interface Progress {
   parsed: number
   total: number
   batched: number
   errors: number
+  inserted: number
+  overwritten: number
+  superseded: number
+  skipped: number
+}
+
+/** What a load is about to land on, counted before anything is written. */
+interface Preflight {
+  keys: number
+  fresh: number
+  existingSoi: number
+  existingEfile: number
+}
+
+const ZERO_PROGRESS: Progress = {
+  parsed: 0, total: 0, batched: 0, errors: 0,
+  inserted: 0, overwritten: 0, superseded: 0, skipped: 0,
 }
 
 // ── component ────────────────────────────────────────────────────────────────
@@ -62,7 +108,9 @@ export default function IngestPage() {
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState<FileFormat | null>(null)
   const [status, setStatus] = useState<Status>('idle')
-  const [progress, setProgress] = useState<Progress>({ parsed: 0, total: 0, batched: 0, errors: 0 })
+  const [progress, setProgress] = useState<Progress>(ZERO_PROGRESS)
+  const [preflight, setPreflight] = useState<Preflight | null>(null)
+  const [mode, setMode] = useState<ConflictMode>('skip')
   const [logs, setLogs] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -86,7 +134,9 @@ export default function IngestPage() {
     setFile(selected)
     setFormat(fmt)
     setStatus('idle')
-    setProgress({ parsed: 0, total: 0, batched: 0, errors: 0 })
+    setProgress(ZERO_PROGRESS)
+    setPreflight(null)
+    setMode('skip')
     setLogs([])
   }
 
@@ -121,7 +171,12 @@ export default function IngestPage() {
       return fetch('/api/ingest/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: batch, source_file: sourceFile }),
+        body: JSON.stringify({
+          rows: batch,
+          source_file: sourceFile,
+          data_source: DATA_SOURCE,
+          on_conflict: mode,
+        }),
       })
     }
 
@@ -165,16 +220,128 @@ export default function IngestPage() {
       }
     }
 
-    addLog(`Batch ${batchNum} complete (${batch.length} rows)`)
-    setProgress((p) => ({ ...p, batched: p.batched + batch.length }))
+    let counts = { inserted: 0, overwritten: 0, superseded: 0, skipped: 0 }
+    try {
+      const body = await res.json()
+      counts = {
+        inserted: body.inserted ?? 0,
+        overwritten: body.overwritten ?? 0,
+        superseded: body.superseded ?? 0,
+        skipped: body.skipped ?? 0,
+      }
+    } catch { /* counts stay zero; the rows still landed */ }
+
+    const detail = [
+      counts.inserted && `${counts.inserted} new`,
+      counts.overwritten && `${counts.overwritten} replaced`,
+      counts.superseded && `${counts.superseded} superseded`,
+      counts.skipped && `${counts.skipped} skipped`,
+    ].filter(Boolean).join(', ')
+    addLog(`Batch ${batchNum} complete (${batch.length} rows${detail ? ` — ${detail}` : ''})`)
+
+    setProgress((p) => ({
+      ...p,
+      batched: p.batched + batch.length,
+      inserted: p.inserted + counts.inserted,
+      overwritten: p.overwritten + counts.overwritten,
+      superseded: p.superseded + counts.superseded,
+      skipped: p.skipped + counts.skipped,
+    }))
     return true
+  }
+
+  /**
+   * Pass one: read only (ein, tax_period) from the file and ask the API which
+   * of those keys already exist, and from which source. Nothing is written.
+   *
+   * Deliberately a separate pass over the File rather than buffering every
+   * mapped row in memory — the operator has to see what a load will collide
+   * with before deciding skip or overwrite, and a 340,000-row extract held as
+   * JS objects is a far worse trade than parsing the file twice.
+   */
+  function runPreflight() {
+    if (!file || !format) return
+    cancelRef.current = false
+    setStatus('checking')
+    setPreflight(null)
+    setProgress(ZERO_PROGRESS)
+    setLogs([])
+    addLog('Checking what this file will land on...')
+
+    const tally: Preflight = { keys: 0, fresh: 0, existingSoi: 0, existingEfile: 0 }
+    let chunk: { ein: string; tax_period: string }[] = []
+    // Chunks are collected during the parse and sent afterwards through a
+    // bounded pool. Holding keys is cheap — ~40 bytes each, so ~14MB for a
+    // 340,000-row extract — and far cheaper than holding mapped rows.
+    const chunks: { ein: string; tax_period: string }[][] = []
+    let seen = 0
+
+    const checkChunk = async (keys: { ein: string; tax_period: string }[]) => {
+      try {
+        const res = await fetch('/api/ingest/preflight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const body = await res.json()
+        tally.keys += body.summary.checked
+        tally.fresh += body.summary.new
+        tally.existingSoi += body.summary.existing_soi
+        tally.existingEfile += body.summary.existing_efile
+        setPreflight({ ...tally })
+      } catch (err) {
+        addLog(`\u26a0 Conflict check chunk failed: ${String(err)}`)
+      }
+    }
+
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      worker: false,
+      step: (result) => {
+        if (cancelRef.current) return
+        const row = result.data
+        if (!isForm990Row(row, format)) return
+        const mapped = mapRow(row, format, file.name)
+        if (!mapped) return
+        seen++
+        chunk.push({ ein: mapped.ein, tax_period: mapped.tax_period })
+        if (chunk.length >= PREFLIGHT_CHUNK) {
+          chunks.push(chunk)
+          chunk = []
+        }
+      },
+      complete: async () => {
+        if (cancelRef.current) {
+          setStatus('idle')
+          addLog('Conflict check cancelled.')
+          return
+        }
+        if (chunk.length > 0) chunks.push(chunk)
+        chunk = []
+        addLog(`Read ${seen.toLocaleString()} rows — checking ${chunks.length} batches of keys...`)
+        await pooled(chunks.map((c) => () => checkChunk(c)), MAX_INFLIGHT)
+        setPreflight({ ...tally })
+        addLog(
+          `\u2713 Checked ${seen.toLocaleString()} rows: ${tally.fresh.toLocaleString()} new, ` +
+          `${tally.existingSoi.toLocaleString()} already loaded from an annual extract, ` +
+          `${tally.existingEfile.toLocaleString()} already loaded from an e-file archive`,
+        )
+        setStatus('idle')
+      },
+      error: (err: Error) => {
+        addLog(`\u2717 Parse error during conflict check: ${err.message}`)
+        setStatus('error')
+      },
+    })
   }
 
   function startIngestion() {
     if (!file || !format) return
     cancelRef.current = false
     setStatus('parsing')
-    setProgress({ parsed: 0, total: 0, batched: 0, errors: 0 })
+    setProgress(ZERO_PROGRESS)
     setLogs([])
 
     const sourceFile = file.name
@@ -190,20 +357,27 @@ export default function IngestPage() {
     let batchNum = 0
     const pendingBatches: Promise<boolean>[] = []
 
-    const flushBuffer = async (isLast: boolean) => {
-      if (buffer.length === 0) return
-      const batch = buffer.slice()
-      buffer = []
-      bufferMap.clear()
+    // Back-pressure: the step callback cannot await, so instead of firing every
+    // batch at once we pause the parser while MAX_INFLIGHT requests are open
+    // and resume as they settle. Without this a large extract dispatches
+    // hundreds of concurrent POSTs.
+    let inflight = 0
+    let paused = false
+    let parserRef: Papa.Parser | null = null
 
-      const estimatedTotal = Math.ceil((file.size / 200) / BATCH_SIZE)
-      batchNum++
-      const currentBatch = batchNum
-      const p = sendBatch(batch, currentBatch, Math.max(estimatedTotal, currentBatch), sourceFile)
-      if (isLast) {
-        await p
-      } else {
-        pendingBatches.push(p)
+    const dispatch = (batch: MappedRow[], num: number, total: number) => {
+      inflight++
+      const p = sendBatch(batch, num, total, sourceFile).finally(() => {
+        inflight--
+        if (paused && inflight < MAX_INFLIGHT) {
+          paused = false
+          parserRef?.resume()
+        }
+      })
+      pendingBatches.push(p)
+      if (inflight >= MAX_INFLIGHT && parserRef && !paused) {
+        paused = true
+        parserRef.pause()
       }
     }
 
@@ -211,7 +385,8 @@ export default function IngestPage() {
       header: true,
       skipEmptyLines: true,
       worker: false, // worker: true requires bundler config — use main thread streaming via step
-      step: (result: Papa.ParseStepResult<Record<string, string>>) => {
+      step: (result: Papa.ParseStepResult<Record<string, string>>, parser: Papa.Parser) => {
+        parserRef = parser
         if (cancelRef.current) return
 
         const row = result.data
@@ -240,15 +415,13 @@ export default function IngestPage() {
         }
 
         if (buffer.length >= BATCH_SIZE) {
-          // We can't await inside step, so we fire-and-forget here and track via pendingBatches
           const batch = buffer.slice()
           buffer = []
           bufferMap.clear()
           const estimatedTotal = Math.ceil((file.size / 200) / BATCH_SIZE)
           batchNum++
-          const currentBatch = batchNum
           setStatus('uploading')
-          pendingBatches.push(sendBatch(batch, currentBatch, Math.max(estimatedTotal, currentBatch), sourceFile))
+          dispatch(batch, batchNum, Math.max(estimatedTotal, batchNum))
         }
       },
       complete: async () => {
@@ -265,9 +438,8 @@ export default function IngestPage() {
           const batch = buffer.slice()
           buffer = []
           bufferMap.clear()
-          const estimatedTotal = Math.max(batchNum + 1, batchNum)
           batchNum++
-          pendingBatches.push(sendBatch(batch, batchNum, estimatedTotal, sourceFile))
+          dispatch(batch, batchNum, batchNum)
         }
 
         // Wait for all pending batches
@@ -305,7 +477,9 @@ export default function IngestPage() {
       ? Math.min(99, Math.round((progress.batched / estimatedRows) * 100))
       : 0
 
+  const isChecking = status === 'checking'
   const isRunning = status === 'parsing' || status === 'uploading'
+  const isBusy = isChecking || isRunning
 
   return (
     <div
@@ -579,21 +753,21 @@ export default function IngestPage() {
               </div>
 
               <button
-                onClick={startIngestion}
-                disabled={!file || !format || isRunning}
+                onClick={runPreflight}
+                disabled={!file || !format || isBusy}
                 style={{
-                  backgroundColor: !file || !format || isRunning ? '#BDD3DC' : '#6F99CC',
+                  backgroundColor: !file || !format || isBusy ? '#BDD3DC' : '#6F99CC',
                   color: '#FFFFFF',
                   border: 'none',
                   borderRadius: '5px',
                   padding: '10px 28px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  cursor: !file || !format || isRunning ? 'not-allowed' : 'pointer',
+                  cursor: !file || !format || isBusy ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.15s',
                 }}
               >
-                Begin Ingestion
+                {isChecking ? 'Checking...' : 'Check for Conflicts'}
               </button>
             </>
           ) : (
@@ -603,6 +777,148 @@ export default function IngestPage() {
           )}
         </div>
       </section>
+
+      {/* Step 3 — Conflicts & load */}
+      {preflight && (
+        <section style={{ marginBottom: '24px' }}>
+          <div
+            style={{
+              fontSize: '11px',
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: '#3D5A63',
+              backgroundColor: '#D7E8EE',
+              padding: '6px 14px',
+              borderRadius: '4px 4px 0 0',
+              borderBottom: '1px solid #BDD3DC',
+            }}
+          >
+            Step 3 — Conflicts &amp; Load
+          </div>
+          <div
+            style={{
+              backgroundColor: '#FFFFFF',
+              border: '1px solid #BDD3DC',
+              borderTop: 'none',
+              borderRadius: '0 0 6px 6px',
+              padding: '24px',
+            }}
+          >
+            {/* Counts */}
+            <div style={{ display: 'flex', gap: '1px', backgroundColor: '#BDD3DC', border: '1px solid #BDD3DC', borderRadius: '4px', overflow: 'hidden', marginBottom: '20px', flexWrap: 'wrap' }}>
+              {[
+                { k: 'New records', v: preflight.fresh, note: 'no existing row for this period' },
+                { k: 'Already from an annual extract', v: preflight.existingSoi, note: 'authoritative source' },
+                { k: 'Already from an e-file archive', v: preflight.existingEfile, note: 'preliminary source' },
+              ].map(({ k, v, note }) => (
+                <div key={k} style={{ backgroundColor: '#FFFFFF', padding: '12px 16px', flex: '1 1 180px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span style={{ fontSize: '20px', fontWeight: 600, color: '#10232B', fontVariantNumeric: 'tabular-nums' }}>
+                    {v.toLocaleString()}
+                  </span>
+                  <span style={{ fontSize: '12px', color: '#10232B', fontWeight: 500 }}>{k}</span>
+                  <span style={{ fontSize: '11px', color: '#7A9AA4' }}>{note}</span>
+                </div>
+              ))}
+            </div>
+
+            {preflight.existingSoi + preflight.existingEfile === 0 ? (
+              <p style={{ margin: '0 0 20px', fontSize: '13px', color: '#3D5A63' }}>
+                Nothing in this file collides with data already loaded. It will be added as new records.
+              </p>
+            ) : (
+              <>
+                <p
+                  style={{
+                    margin: '0 0 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: '#3D5A63',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  For records that already exist
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+                  {([
+                    {
+                      value: 'skip' as ConflictMode,
+                      label: 'Keep what is already stored',
+                      detail: 'Existing records are left untouched. Only new records are added.',
+                    },
+                    {
+                      value: 'overwrite' as ConflictMode,
+                      label: 'Replace with this file',
+                      detail: 'This file wins field by field. Where it has no value, the stored value is kept rather than blanked.',
+                    },
+                  ]).map((opt) => (
+                    <label
+                      key={opt.value}
+                      style={{
+                        display: 'flex',
+                        gap: '10px',
+                        alignItems: 'flex-start',
+                        padding: '12px 14px',
+                        border: `1px solid ${mode === opt.value ? '#6F99CC' : '#BDD3DC'}`,
+                        backgroundColor: mode === opt.value ? '#E4EEF8' : '#FFFFFF',
+                        borderRadius: '4px',
+                        cursor: isRunning ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="on_conflict"
+                        value={opt.value}
+                        checked={mode === opt.value}
+                        disabled={isRunning}
+                        onChange={() => setMode(opt.value)}
+                        style={{ marginTop: '2px', accentColor: '#6F99CC' }}
+                      />
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 500, color: '#10232B' }}>{opt.label}</span>
+                        <span style={{ fontSize: '12px', color: '#3D5A63' }}>{opt.detail}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    backgroundColor: '#F2F4F1',
+                    border: '1px solid #BDD3DC',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    color: '#3D5A63',
+                    marginBottom: '20px',
+                  }}
+                >
+                  Amended returns are handled separately: where an organisation filed the same form more
+                  than once for a period, the most recent submission is always used, and the change is
+                  recorded regardless of the choice above.
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={startIngestion}
+              disabled={!file || !format || isBusy}
+              style={{
+                backgroundColor: !file || !format || isBusy ? '#BDD3DC' : '#6F99CC',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '5px',
+                padding: '10px 28px',
+                fontSize: '14px',
+                fontWeight: 600,
+                cursor: !file || !format || isBusy ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Begin Ingestion
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Step 3 — Progress */}
       {(isRunning || status === 'done' || status === 'error' || logs.length > 0) && (
@@ -623,7 +939,7 @@ export default function IngestPage() {
               justifyContent: 'space-between',
             }}
           >
-            <span>Step 3 — Progress</span>
+            <span>Step 4 — Progress</span>
             {isRunning && (
               <button
                 onClick={handleCancel}
@@ -693,6 +1009,18 @@ export default function IngestPage() {
                 <span style={{ color: '#B83228' }}>
                   <strong>{progress.errors}</strong> batch error{progress.errors !== 1 ? 's' : ''}
                 </span>
+              )}
+              {progress.inserted > 0 && (
+                <span><strong style={{ color: '#10232B' }}>{progress.inserted.toLocaleString()}</strong> new</span>
+              )}
+              {progress.overwritten > 0 && (
+                <span><strong style={{ color: '#10232B' }}>{progress.overwritten.toLocaleString()}</strong> replaced</span>
+              )}
+              {progress.superseded > 0 && (
+                <span><strong style={{ color: '#10232B' }}>{progress.superseded.toLocaleString()}</strong> superseded</span>
+              )}
+              {progress.skipped > 0 && (
+                <span><strong style={{ color: '#10232B' }}>{progress.skipped.toLocaleString()}</strong> skipped</span>
               )}
               {status === 'done' && (
                 <span style={{ color: '#4A8A6A', fontWeight: 600 }}>Complete</span>

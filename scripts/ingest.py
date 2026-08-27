@@ -231,8 +231,19 @@ def derive_other_revenue(
     return total_revenue - (contributions or 0) - (program_revenue or 0) - (investment_income or 0)
 
 
+# Set from --with-raw in main(). Off by default: filings_raw was dropped (10 GB,
+# never read by apps/web). When off we skip building the dicts entirely rather
+# than building and discarding them on every one of ~7M rows.
+CAPTURE_RAW = False
+
+
 def build_raw_data(row: dict) -> dict:
-    """Return a dict of all row fields not already promoted to named columns."""
+    """Return a dict of all row fields not already promoted to named columns.
+
+    Empty unless --with-raw was passed; see CAPTURE_RAW.
+    """
+    if not CAPTURE_RAW:
+        return {}
     return {k: v for k, v in row.items() if k not in PROMOTED_FIELDS and v not in (None, "", ".")}
 
 
@@ -758,6 +769,14 @@ def upsert_filings(conn, records: list[dict], dry_run: bool) -> int:
 def upsert_raw(conn, records: list[dict], dry_run: bool) -> int:
     if not records or dry_run:
         return len(records)
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('filings_raw') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            raise SystemExit(
+                "--with-raw was passed but the filings_raw table does not exist.\n"
+                "It was dropped by scripts/migrate_drop_filings_raw.sql. Re-create it with:\n"
+                "  python scripts/run_migration.py migrate_expand_filings.sql"
+            )
     row_tuples = [
         (
             r["ein"],
@@ -959,7 +978,7 @@ def ingest_file(
     min_revenue: float | None = None,
     min_fiscal_year: int | None = None,
     max_fiscal_year: int | None = None,
-    skip_raw: bool = False,
+    with_raw: bool = False,
 ) -> None:
     filename = filepath.name
     print(f"\n[{filename}] Reading ...", flush=True)
@@ -993,7 +1012,7 @@ def ingest_file(
         batch = records[i: i + batch_size]
         try:
             upsert_filings(conn, batch, dry_run=False)
-            if not skip_raw:
+            if with_raw:
                 upsert_raw(conn, batch, dry_run=False)
             total_upserted += len(batch)
             i += len(batch)
@@ -1057,12 +1076,18 @@ def main() -> None:
     parser.add_argument("--max-fiscal-year", type=int, default=None,
                          help="Only ingest filings with fiscal_year <= this value "
                               "(useful for dropping a mostly-unfiled trailing year)")
-    parser.add_argument("--skip-raw", action="store_true",
-                         help="Don't populate filings_raw (unused by the app; saves significant DB size)")
+    parser.add_argument("--with-raw", action="store_true",
+                         help="Also populate filings_raw with every unpromoted source field. "
+                              "OFF by default: the table was dropped (10 GB, never read by the app) "
+                              "in migrate_drop_filings_raw.sql. Re-create it from "
+                              "migrate_expand_filings.sql before using this flag.")
     parser.add_argument("--restrict-eobmf-to-filings", action="store_true",
                          help="When used with --eobmf and --files, only load organizations "
                               "whose EIN appears in the filtered filing files")
     args = parser.parse_args()
+
+    global CAPTURE_RAW
+    CAPTURE_RAW = args.with_raw
 
     data_dir = Path(args.data_dir).expanduser().resolve()
     if not data_dir.is_dir():
@@ -1124,7 +1149,7 @@ def main() -> None:
         for filepath in files:
             ingest_file(filepath, conn, dry_run=args.dry_run, database_url=database_url,
                         min_revenue=args.min_revenue, min_fiscal_year=args.min_fiscal_year,
-                        max_fiscal_year=args.max_fiscal_year, skip_raw=args.skip_raw)
+                        max_fiscal_year=args.max_fiscal_year, with_raw=args.with_raw)
 
     if conn:
         conn.close()
