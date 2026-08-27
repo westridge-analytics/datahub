@@ -94,6 +94,15 @@ describe('Search', () => {
     )
   })
 
+  test('environment and culture partners is found (was missing — eo3/eo4 BMF files never ingested)', async () => {
+    const json = await filings({ search: '87-1213015' })
+    assert.ok(json.data.length > 0, 'no results for EIN 87-1213015')
+    assert.ok(
+      json.data.some(r => r.ein === '87-1213015' && r.name.toUpperCase().includes('ENVIRONMENT AND CULTURE PARTNERS')),
+      'Environment And Culture Partners not in results'
+    )
+  })
+
   test('search does not return 500', async () => {
     // Previously broken — Postgres param count mismatch
     const json = await filings({ search: 'madison children' })
