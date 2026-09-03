@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import struct
 import json
 import os
 import re
@@ -48,6 +49,11 @@ from typing import Any, Iterator
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+
+try:                                    # optional: only needed for Deflate64
+    import inflate64
+except ImportError:                     # pragma: no cover
+    inflate64 = None
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_DIR = ROOT / "apps/web/lib/ingest"
@@ -248,13 +254,55 @@ def open_archive(path: str | None, url: str | None) -> tuple[zipfile.ZipFile, st
     return zipfile.ZipFile(buf), name
 
 
+DEFLATE64 = 9
+
+
+def read_entry(zf: zipfile.ZipFile, entry: str) -> bytes:
+    """Read one entry, falling back to a Deflate64 decoder when needed.
+
+    Five of the 24 published archives use Deflate64 (method 9) — including the
+    largest, 2026_05A at 168,344 returns — and Python's zipfile implements only
+    stored, deflate, bzip2 and lzma. It is not an exotic edge case here, so the
+    fallback reads the raw compressed bytes straight out of the local header and
+    inflates them with `inflate64`.
+
+    Note this affects the browser uploader too: fflate does not implement
+    Deflate64 either, so those five archives must be loaded with this CLI.
+    """
+    info = zf.getinfo(entry)
+    if info.compress_type != DEFLATE64:
+        return zf.read(entry)
+    if inflate64 is None:
+        raise NotImplementedError(
+            f"{entry} uses Deflate64 and the `inflate64` package is not installed "
+            "(pip install inflate64)"
+        )
+    fp = zf.fp
+    assert fp is not None
+    fp.seek(info.header_offset)
+    head = fp.read(30)
+    name_len, extra_len = struct.unpack("<HH", head[26:30])
+    fp.seek(info.header_offset + 30 + name_len + extra_len)
+    out = inflate64.Inflater().inflate(fp.read(info.compress_size))
+    if len(out) != info.file_size:
+        raise zipfile.BadZipFile(
+            f"{entry}: Deflate64 produced {len(out)} bytes, expected {info.file_size}"
+        )
+    return out
+
+
 def iter_returns(zf: zipfile.ZipFile, source_file: str, limit: int | None,
                  skips: Counter) -> Iterator[dict]:
     seen = 0
     for entry in zf.namelist():
         if not entry.endswith(".xml"):
             continue
-        row, reason = map_return(zf.read(entry), entry, source_file)
+        try:
+            raw = read_entry(zf, entry)
+        except (zipfile.BadZipFile, OSError) as exc:
+            skips[f"unreadable_entry:{type(exc).__name__}"] += 1
+            continue
+        row, reason = map_return(raw, entry, source_file)
         if row is None:
             skips[reason] += 1
             continue
@@ -493,16 +541,36 @@ def main() -> None:
             sys.exit(1)
         conn = psycopg2.connect(database_url)
 
+    failed: list[tuple[str, str]] = []
+
+    def run(path: str | None, url: str | None) -> None:
+        name = os.path.basename(path) if path else url.rsplit("/", 1)[-1]  # type: ignore[union-attr]
+        try:
+            zf, name = open_archive(path, url)
+            ingest_archive(conn, zf, name, args)
+        except NotImplementedError:
+            # An unsupported compression method must cost one archive, not the
+            # whole run. The first backfill lost 19 good archives to one bad one.
+            failed.append((name, "Deflate64 — unsupported by Python's zipfile"))
+            print(f"[{name}] SKIPPED: compression method not supported "
+                  f"(Deflate64). See scripts/README.md", flush=True)
+        except Exception as exc:                              # noqa: BLE001
+            failed.append((name, f"{type(exc).__name__}: {exc}"))
+            print(f"[{name}] FAILED: {type(exc).__name__}: {exc}", flush=True)
+
     try:
         for path in args.zip:
-            zf, name = open_archive(path, None)
-            ingest_archive(conn, zf, name, args)
+            run(path, None)
         for url in urls:
-            zf, name = open_archive(None, url)
-            ingest_archive(conn, zf, name, args)
+            run(None, url)
     finally:
         if conn:
             conn.close()
+    if failed:
+        print(f"\n{len(failed)} archive(s) not loaded:")
+        for name, why in failed:
+            print(f"  {name}: {why}")
+        print("\nEverything else loaded. Re-run with just those once resolved.")
     print("\nDone.")
 
 

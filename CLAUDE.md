@@ -110,6 +110,23 @@ do not "fix" it.
 `missing_ein`, `bad_tax_period`, `malformed`, each with the return type, so the uploader can report
 a breakdown instead of a silent zero.
 
+### Five archives use Deflate64, and most tools cannot read them
+`2025_05A`, `2025_05B`, `2025_11B`, `2026_05A`, `2026_05B` are compressed with **Deflate64**
+(method 9) rather than deflate. They are also among the largest — 2026_05A alone holds 168,344
+returns — so this is a large share of the data, not an edge case.
+
+Python's `zipfile` implements only stored/deflate/bzip2/lzma and raises
+`NotImplementedError: That compression method is not supported`. Info-ZIP `unzip` cannot read it
+either. `scripts/efile_ingest.py` falls back to the `inflate64` package, reading the raw compressed
+bytes from the local header (see `read_entry`). Verified byte-exact against the real archives.
+
+**The browser uploader cannot read these five.** `fflate` does not implement Deflate64 either, so
+they must go through the CLI. Check `compress_type` before assuming an archive will load in the
+browser.
+
+Related: one unsupported archive must never abort a run. The first backfill attempt lost 19 good
+archives to one bad one; the CLI now isolates failures per archive and reports them at the end.
+
 ### Bulk loading: `scripts/efile_ingest.py`
 ```bash
 python scripts/efile_ingest.py --zip <path>            # local archive
