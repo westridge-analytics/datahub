@@ -6,6 +6,13 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // Lets internal relative imports carry the .ts extension, so the exact
+    // same specifier resolves under `tsc`, Turbopack, and `node --test`'s
+    // type stripping. Without it, production modules must be extensionless
+    // (which Node cannot resolve) while tests must be explicit — the split
+    // that forced two modules to be merged earlier in this project.
+    // Legal only with noEmit or emitDeclarationOnly.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

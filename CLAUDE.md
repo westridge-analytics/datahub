@@ -105,6 +105,33 @@ do not "fix" it.
 `missing_ein`, `bad_tax_period`, `malformed`, each with the return type, so the uploader can report
 a breakdown instead of a silent zero.
 
+### Reading an e-file archive
+`lib/ingest/efile-reader.ts` streams a monthly `.zip` — the largest is 521 MB compressed and ~2.7 GB
+expanded across 168,344 returns, so nothing may be held whole.
+
+Two things that are easy to get wrong and were both found by testing at scale rather than on a
+fixture:
+- **Slice the Blob yourself; do not trust `stream()` chunk sizes.** fflate's `Unzip.push` recurses
+  once per entry boundary in the chunk it is handed, and Node passed the entire 68 MB archive as a
+  single chunk — ~12,000 frames deep and a stack overflow. `CHUNK_BYTES` is 256 KB, which keeps the
+  depth in the tens. Browser chunk sizes are not guaranteed either.
+- **The XML parser is injected.** Production passes the browser's native `DOMParser` (C++, and it
+  matters over 2.7 GB); tests inject `@xmldom/xmldom` and drive the same streaming code against a
+  real ZIP fixture.
+
+Measured on 2026_TEOS_XML_01A.zip: 12,245 entries in **10.9s** at 1,127/sec with the pure-JS parser.
+Unzip is only 1.5s of that; parsing dominates. The reader yields to the event loop every 250 entries
+instead of using a Web Worker — `new Worker(new URL(...))` bundling is the sort of thing this Next
+version changes, and yields were the lower-risk way to keep the tab responsive. If a large archive
+feels frozen in practice, a Worker is a contained follow-up.
+
+The TypeScript reader and an independent Python pass over the same archive agree exactly — 11,924
+mapped, 321 unsupported 990-T — which is the check that the shared concordance actually works.
+
+`internal relative imports carry the .ts extension` (enabled by `allowImportingTsExtensions`), so
+one specifier resolves under `tsc`, Turbopack and `node --test` alike. Without it, production
+modules had to be extensionless while tests had to be explicit.
+
 ### Organization names come from the BMF, never from a filing load
 `organizations.name` is `NOT NULL`, and the SOI extracts carry **no name column at all** — only the
 EO BMF does. So `buildOrganizationsUpsert` returns `null` when no incoming row has a name, and the

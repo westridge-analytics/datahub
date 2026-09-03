@@ -2,7 +2,9 @@
 
 import { useRef, useState, useCallback } from 'react'
 import Papa from 'papaparse'
-import { canonicalHeader, detectFormat, isForm990Row, mapRow, unsupportedReason, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
+import { canonicalHeader, dataSourceFor, detectFormat, isForm990Row, mapRow, unsupportedReason, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
+import { readEfileArchive, readEfileKeys } from '@/lib/ingest/efile-reader'
+import type { EfileSkipReason } from '@/lib/ingest/efile-map'
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -24,10 +26,9 @@ const MAX_INFLIGHT = 5
 // count and use that instead.
 const BYTES_PER_ROW_ESTIMATE = 690
 
-// This screen loads the IRS SOI annual extracts, which are the authoritative
-// source. The e-file XML archive path (data_source 'efile_xml') arrives in a
-// later phase and will set this per file.
-const DATA_SOURCE = 'soi_extract'
+// data_source is derived from the file: the SOI annual extracts are
+// authoritative and lagging, the monthly e-file archives are near-real-time and
+// raw as filed. See dataSourceFor() in field-map.ts.
 
 // CSV only. The .dat-era extracts (py12–py14, 15eo–17eo) are a closed
 // historical set: all 17 files are already loaded (3,444,075 rows, FY1976–2017),
@@ -44,12 +45,14 @@ const KNOWN_PATTERNS = [
   '22eoextract990.csv',
   '23eoextract990.csv',
   '24eoextract990.csv',
+  '2026_TEOS_XML_01A.zip',
 ]
 
 function isKnownFilename(name: string): boolean {
   const lower = name.toLowerCase()
   return KNOWN_PATTERNS.some((p) => lower.includes(p.replace(/^\d+/, ''))) ||
-    /^\d{2}eoextract990\.csv$/.test(lower)
+    /^\d{2}eoextract990\.csv$/.test(lower) ||
+    /^\d{4}_teos_xml_\d{2}[a-z]\.zip$/.test(lower)
 }
 
 /** Run tasks with at most `limit` in flight, preserving completion effects. */
@@ -142,6 +145,19 @@ export default function IngestPage() {
     }, 0)
   }, [])
 
+  /** Report what an archive read dropped, and why. Never a silent zero. */
+  const logSkips = useCallback((stats: { skipped: number; byReason: Record<EfileSkipReason, number>; unsupportedTypes: Record<string, number> }) => {
+    if (stats.skipped === 0) return
+    const parts: string[] = []
+    const types = Object.entries(stats.unsupportedTypes).map(([t, n]) => `${n.toLocaleString()} ${t}`)
+    if (types.length) parts.push(`${types.join(', ')} (form not supported)`)
+    if (stats.byReason.missing_ein) parts.push(`${stats.byReason.missing_ein} with no EIN`)
+    if (stats.byReason.bad_tax_period) parts.push(`${stats.byReason.bad_tax_period} with an unusable tax period`)
+    if (stats.byReason.malformed) parts.push(`${stats.byReason.malformed} unreadable`)
+    addLog(`\u26a0 ${stats.skipped.toLocaleString()} returns skipped — ${parts.join('; ')}`)
+  }, [addLog])
+
+
   function handleFileSelect(selected: File) {
     const fmt = detectFormat(selected.name)
     setFile(selected)
@@ -189,7 +205,7 @@ export default function IngestPage() {
         body: JSON.stringify({
           rows: batch,
           source_file: sourceFile,
-          data_source: DATA_SOURCE,
+          data_source: dataSourceFor(format!),
           on_conflict: mode,
         }),
       })
@@ -323,6 +339,60 @@ export default function IngestPage() {
       }
     }
 
+    /** Shared tail: drain the key chunks through the pool and report. */
+    const finish = async (rowsRead: number) => {
+      if (cancelRef.current) {
+        setStatus('idle')
+        addLog('Conflict check cancelled.')
+        return
+      }
+      if (chunk.length > 0) chunks.push(chunk)
+      chunk = []
+      setRowCount(rowsRead)
+      setProgress((p) => ({ ...p, total: rowsRead }))
+      addLog(`Read ${rowsRead.toLocaleString()} returns — checking ${chunks.length} batches of keys...`)
+      await pooled(chunks.map((c) => () => checkChunk(c)), MAX_INFLIGHT)
+      setPreflight({ ...tally })
+      addLog(
+        `\u2713 Checked ${rowsRead.toLocaleString()} returns: ${tally.fresh.toLocaleString()} new, ` +
+        `${tally.existingSoi.toLocaleString()} already loaded from an annual extract, ` +
+        `${tally.existingEfile.toLocaleString()} already loaded from an e-file archive`,
+      )
+      setStatus('idle')
+    }
+
+    const collect = (ein: string, taxPeriod: string) => {
+      seen++
+      chunk.push({ ein, tax_period: taxPeriod })
+      if (chunk.length >= PREFLIGHT_CHUNK) {
+        chunks.push(chunk)
+        chunk = []
+      }
+    }
+
+    // ── e-file archive: stream the ZIP, keys only ────────────────────────────
+    if (format === 'efile') {
+      addLog('Streaming the archive for a conflict check (pass 1 of 2)...')
+      readEfileKeys(file, {
+        sourceFile: file.name,
+        cancelled: () => cancelRef.current,
+        onProgress: (st) => {
+          setProgress((p) => ({ ...p, parsed: st.mapped }))
+        },
+      })
+        .then(async ({ keys, stats }) => {
+          for (const k of keys) collect(k.ein, k.tax_period)
+          logSkips(stats)
+          await finish(keys.length)
+        })
+        .catch((err) => {
+          addLog(`\u2717 Could not read the archive: ${String(err)}`)
+          setStatus('error')
+        })
+      return
+    }
+
+    // ── CSV extract ──────────────────────────────────────────────────────────
     Papa.parse<Record<string, string>>(file, {
       header: true,
       transformHeader: canonicalHeader,
@@ -334,33 +404,9 @@ export default function IngestPage() {
         if (!isForm990Row(row, format)) return
         const mapped = mapRow(row, format, file.name)
         if (!mapped) return
-        seen++
-        chunk.push({ ein: mapped.ein, tax_period: mapped.tax_period })
-        if (chunk.length >= PREFLIGHT_CHUNK) {
-          chunks.push(chunk)
-          chunk = []
-        }
+        collect(mapped.ein, mapped.tax_period)
       },
-      complete: async () => {
-        if (cancelRef.current) {
-          setStatus('idle')
-          addLog('Conflict check cancelled.')
-          return
-        }
-        if (chunk.length > 0) chunks.push(chunk)
-        chunk = []
-        setRowCount(seen)
-        setProgress((p) => ({ ...p, total: seen }))
-        addLog(`Read ${seen.toLocaleString()} rows — checking ${chunks.length} batches of keys...`)
-        await pooled(chunks.map((c) => () => checkChunk(c)), MAX_INFLIGHT)
-        setPreflight({ ...tally })
-        addLog(
-          `\u2713 Checked ${seen.toLocaleString()} rows: ${tally.fresh.toLocaleString()} new, ` +
-          `${tally.existingSoi.toLocaleString()} already loaded from an annual extract, ` +
-          `${tally.existingEfile.toLocaleString()} already loaded from an e-file archive`,
-        )
-        setStatus('idle')
-      },
+      complete: () => { void finish(seen) },
       error: (err: Error) => {
         addLog(`\u2717 Parse error during conflict check: ${err.message}`)
         setStatus('error')
@@ -410,6 +456,54 @@ export default function IngestPage() {
         paused = true
         parserRef.pause()
       }
+    }
+
+    // ── e-file archive: stream the ZIP and post as we go ─────────────────────
+    // Back-pressure here is simpler than the CSV path's parser pause/resume:
+    // readEfileArchive awaits onRow, so returning an unresolved promise is
+    // itself the brake.
+    if (format === 'efile') {
+      addLog('Streaming the archive (pass 2 of 2 — loading)...')
+      setStatus('uploading')
+      let buf: MappedRow[] = []
+      let batchNum = 0
+      const estTotal = () => Math.max(rowCount ?? 0, progress.batched) / BATCH_SIZE
+
+      const flush = async () => {
+        if (buf.length === 0) return
+        const batch = buf
+        buf = []
+        batchNum++
+        await sendBatch(batch, batchNum, Math.max(Math.ceil(estTotal()), batchNum), sourceFile)
+      }
+
+      readEfileArchive(file, {
+        sourceFile,
+        cancelled: () => cancelRef.current,
+        onProgress: (st) => { setProgress((pr) => ({ ...pr, parsed: st.mapped })) },
+        onRow: async (row) => {
+          buf.push(row as unknown as MappedRow)
+          if (buf.length >= BATCH_SIZE) await flush()
+        },
+      })
+        .then(async (stats) => {
+          await flush()
+          logSkips(stats)
+          const elapsed = Date.now() - startTime
+          setProgress((pr) => {
+            addLog(
+              `\u2713 Ingestion complete: ${pr.batched.toLocaleString()} returns processed in ` +
+              `${formatDuration(elapsed)}` + (pr.errors > 0 ? ` (${pr.errors} batch errors)` : ''),
+            )
+            return pr
+          })
+          setStatus(cancelRef.current ? 'idle' : 'done')
+        })
+        .catch((err) => {
+          addLog(`\u2717 Archive read failed: ${String(err)}`)
+          setStatus('error')
+        })
+      return
     }
 
     Papa.parse<Record<string, string>>(file, {
@@ -544,7 +638,7 @@ export default function IngestPage() {
           Data Ingestion
         </h1>
         <p style={{ margin: '6px 0 0', fontSize: '14px', color: '#3D5A63' }}>
-          Upload IRS SOI annual extract files to update the database.
+          Upload an IRS SOI annual extract (.csv) or a monthly e-file XML archive (.zip).
         </p>
       </div>
 
@@ -614,7 +708,7 @@ export default function IngestPage() {
               Drag &amp; drop a file here
             </p>
             <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#3D5A63' }}>
-              or click to browse — CSV extracts (18eo onwards)
+              or click to browse — CSV extracts, or a TEOS XML archive
             </p>
             <button
               onClick={(e) => {
@@ -637,7 +731,7 @@ export default function IngestPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.txt"
+              accept=".csv,.txt,.zip"
               style={{ display: 'none' }}
               onChange={handleInputChange}
             />
@@ -676,7 +770,9 @@ export default function IngestPage() {
                       letterSpacing: '0.03em',
                     }}
                   >
-                    {format === 'dat' ? 'Unsupported DAT' : 'Comma-separated CSV'}
+                    {format === 'dat' ? 'Unsupported DAT'
+                      : format === 'efile' ? 'e-file XML archive'
+                      : 'Comma-separated CSV'}
                   </span>
                 )}
               </div>
@@ -765,15 +861,23 @@ export default function IngestPage() {
                 <dd style={{ margin: 0, color: '#10232B' }}>{formatBytes(file.size)}</dd>
                 <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Detected format</dt>
                 <dd style={{ margin: 0, color: '#10232B' }}>
-                  {format === 'dat'
-                    ? 'Space-delimited DAT — not supported here'
+                  {format === 'dat' ? 'Space-delimited DAT — not supported here'
+                    : format === 'efile' ? 'e-file XML archive (ZIP of one XML per return)'
                     : format === 'csv' ? 'Comma-separated CSV' : '—'}
+                </dd>
+                <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Data source</dt>
+                <dd style={{ margin: 0, color: '#10232B' }}>
+                  {format === 'efile'
+                    ? 'e-file XML — preliminary, loses to an annual extract'
+                    : 'SOI annual extract — authoritative'}
                 </dd>
                 <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Estimated rows</dt>
                 <dd style={{ margin: 0, color: '#10232B' }}>
                   {rowCount !== null
                     ? `${rowCount.toLocaleString()} (exact, counted during the conflict check)`
-                    : `~${estimatedRows.toLocaleString()} (rough estimate)`}
+                    : format === 'efile'
+                      ? 'counted during the conflict check'
+                      : `~${estimatedRows.toLocaleString()} (rough estimate)`}
                 </dd>
               </dl>
 

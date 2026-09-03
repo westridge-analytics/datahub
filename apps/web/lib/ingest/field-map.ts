@@ -1,4 +1,9 @@
-export type FileFormat = 'dat' | 'csv'
+/**
+ * 'csv'   — IRS SOI annual extracts (18eo onwards)
+ * 'dat'   — the space-delimited pre-2018 extracts, refused by the uploader
+ * 'efile' — a monthly e-file XML archive (.zip), read by efile-reader.ts
+ */
+export type FileFormat = 'dat' | 'csv' | 'efile'
 
 export interface MappedRow {
   ein: string
@@ -28,7 +33,13 @@ export interface MappedRow {
 export function detectFormat(filename: string): FileFormat {
   const lower = filename.toLowerCase()
   if (lower.endsWith('.dat')) return 'dat'
+  if (lower.endsWith('.zip')) return 'efile'
   return 'csv'
+}
+
+/** Which data_source a file of this format produces. */
+export function dataSourceFor(format: FileFormat): 'soi_extract' | 'efile_xml' {
+  return format === 'efile' ? 'efile_xml' : 'soi_extract'
 }
 
 /**
