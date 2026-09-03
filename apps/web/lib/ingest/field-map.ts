@@ -31,9 +31,31 @@ export function detectFormat(filename: string): FileFormat {
   return 'csv'
 }
 
+/**
+ * Canonicalise a source header name: strip a UTF-8 BOM, trim, lowercase.
+ *
+ * The IRS extracts are not internally consistent about case or naming —
+ * 24eoextract990.csv leads with `efile,EIN,tax_pd,...` while the older files
+ * use `elf` and a lowercase `ein`. Pass this to PapaParse's `transformHeader`
+ * so every row arrives with predictable keys. `scripts/ingest.py` has always
+ * done the equivalent, which is why the Python path loaded these files
+ * correctly while the browser uploader silently filtered every row.
+ */
+export function canonicalHeader(header: string): string {
+  return header.replace(/^\uFEFF/, '').trim().toLowerCase()
+}
+
+/**
+ * Whether a row is a full Form 990 e-filed return.
+ *
+ * The e-file indicator is spelled `efile` in the CSV-era extracts (18eo–24eo)
+ * and `elf` in the older ones; `e-file` also appears. Checking only one of them
+ * filters out the entire file.
+ */
 export function isForm990Row(row: Record<string, string>, format: FileFormat): boolean {
   if (format === 'dat') return true
-  return row['elf'] === 'E'
+  const indicator = row['elf'] ?? row['efile'] ?? row['e-file']
+  return indicator?.trim().toUpperCase() === 'E'
 }
 
 export function normalizeEin(raw: string): string {

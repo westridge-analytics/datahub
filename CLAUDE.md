@@ -56,6 +56,20 @@ Under the proxy convention Next buffers each request body in memory so it can be
 The ingestion batches are the only large bodies here: 0.63MB per 1,000 rows today, ~2.3MB once the
 e-file field map lands. Raise the config before raising `MAX_ROWS` much beyond that.
 
+### IRS extract headers are not internally consistent
+Canonicalise every source header (`canonicalHeader`: strip BOM, trim, lowercase) before mapping.
+`24eoextract990.csv` leads with `efile,EIN,tax_pd,...`; the older extracts use `elf` and a
+lowercase `ein`. The e-file indicator appears as `efile`, `elf`, or `e-file` — check all three.
+
+This bit once: the browser uploader looked only for `row['elf']` and `row['ein']`, so every row of
+the CSV-era extracts failed `isForm990Row` and the uploader silently loaded nothing. `ingest.py`
+had always normalised keys, which is why the Python path worked and masked it. Covered now by
+`lib/ingest/field-map.test.ts`, whose fixtures use the real header spellings.
+
+**The .dat path in the browser uploader is still broken** — those files are space-delimited but
+PapaParse is called with the default comma delimiter, so `mapRow` finds no `ein` and filters
+everything. Use `scripts/ingest.py` for .dat files.
+
 ### Ingestion sources and conflict resolution
 `filings.data_source` distinguishes `'soi_extract'` (IRS SOI annual extracts — authoritative,
 lagging) from `'efile_xml'` (monthly e-file archives — near-real-time, raw as filed). All rows

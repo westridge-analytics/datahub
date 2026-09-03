@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback } from 'react'
 import Papa from 'papaparse'
-import { detectFormat, isForm990Row, mapRow, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
+import { canonicalHeader, detectFormat, isForm990Row, mapRow, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -308,6 +308,7 @@ export default function IngestPage() {
 
     Papa.parse<Record<string, string>>(file, {
       header: true,
+      transformHeader: canonicalHeader,
       skipEmptyLines: true,
       worker: false,
       step: (result) => {
@@ -396,6 +397,7 @@ export default function IngestPage() {
 
     Papa.parse<Record<string, string>>(file, {
       header: true,
+      transformHeader: canonicalHeader,
       skipEmptyLines: true,
       worker: false, // worker: true requires bundler config — use main thread streaming via step
       step: (result: Papa.ParseStepResult<Record<string, string>>, parser: Papa.Parser) => {
