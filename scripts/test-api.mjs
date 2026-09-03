@@ -206,6 +206,45 @@ describe('Export', () => {
   })
 })
 
+describe('Ingestion endpoints', () => {
+  // The ingestion routes WRITE to filings, so the important property is that
+  // they are not publicly reachable. proxy.ts allows /api/auth, /api/filings,
+  // /api/organizations and /api/cohorts through unauthenticated; if
+  // /api/ingest/* ever joined that allowlist, anyone could rewrite the
+  // database. These assertions are cheap and would catch that immediately.
+  //
+  // They also guard routing itself: a 404 here means the route file moved or
+  // was renamed, which is worth knowing before an operator discovers it
+  // mid-load.
+  for (const path of ['/api/ingest/preflight', '/api/ingest/batch']) {
+    test(`POST ${path} is routed and requires auth`, async () => {
+      const res = await fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: [], rows: [], source_file: 'test' }),
+        redirect: 'manual',
+      })
+      assert.notEqual(res.status, 404, `${path} is not routed — did the route file move?`)
+      assert.notEqual(res.status, 405, `${path} rejected POST`)
+      assert.ok([302, 307].includes(res.status),
+        `${path} must be auth-gated; got ${res.status}. A 200 means the write path is PUBLIC.`)
+    })
+  }
+
+  test('the ingestion admin screen requires auth', async () => {
+    const res = await fetch(`${BASE}/admin/ingest`, { redirect: 'manual' })
+    assert.ok([302, 307].includes(res.status),
+      `/admin/ingest must redirect to login; got ${res.status}`)
+  })
+
+  test('read-only endpoints stay public, so this suite is testing the right thing', async () => {
+    // Guards against the inverse false positive: if everything redirected,
+    // the assertions above would pass vacuously.
+    const res = await fetch(`${BASE}/api/filings?page=1&page_size=1`, { redirect: 'manual' })
+    assert.equal(res.status, 200, '/api/filings should remain public')
+  })
+})
+
 describe('BIGINT-as-number contract', () => {
   // Neon returns int8/BIGINT as strings by default; lib/db.ts installs a global
   // parser so financial columns come back as JS numbers. If that regresses,

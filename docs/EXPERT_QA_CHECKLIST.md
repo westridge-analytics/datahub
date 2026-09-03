@@ -7,7 +7,7 @@ the numbers *mean* what we assumed, and whether the policy choices match how thi
 
 Status of each item: `[ ]` open · `[x]` confirmed · `[!]` needs change
 
-Last updated 2026-09-03, after Phase 4 (archive reader). Items are added as phases land.
+Last updated 2026-09-03, after Phase 6 (test conformance). Items are added as phases land.
 
 ---
 

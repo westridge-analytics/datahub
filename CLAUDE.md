@@ -161,6 +161,14 @@ The write path is generated from one list in `lib/ingest/upsert-sql.ts` — add 
 in four places in a SQL string. All of it is pure (no DB handle, no `@/` alias) so tests can run
 the real production SQL against a scratch schema.
 
+**A column mapped but not listed in `UPSERT_COLUMNS` is silently dropped**, not rejected. Six were
+(`num_employees`, `legal_fees`, `accounting_fees`, `occupancy`, `depreciation`, `grants_to_govts`) —
+extracted from the XML, discarded on the way to the database, with every unit test on both sides
+passing. `lib/ingest/conformance.test.ts` now asserts that every concordance column is writable and
+that a mapped row's populated fields all reach the generated SQL. The scratch schema in
+`conflict.test.ts` is generated from `UPSERT_COLUMNS` for the same reason: a hand-written mirror
+drifts, and a drifting mirror hides regressions rather than catching them.
+
 `/api/ingest/preflight` reports which `(ein, tax_period)` keys already exist and from which source,
 so the uploader can show the operator what a load will collide with before writing anything. The
 uploader makes two passes over the file: keys only for the conflict check, then the real load.

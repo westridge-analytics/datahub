@@ -44,6 +44,17 @@ export const UPSERT_COLUMNS: UpsertColumn[] = [
   { name: 'unrestr_net_assets', type: 'bigint' },
   { name: 'restr_net_assets', type: 'bigint' },
 
+  // Present in `filings` and mapped by the e-file concordance. Omitting them
+  // here does not error — the value is simply dropped on the way to the
+  // database, which is why conformance.test.ts asserts that every concordance
+  // column appears in this list.
+  { name: 'num_employees', type: 'int' },
+  { name: 'legal_fees', type: 'bigint' },
+  { name: 'accounting_fees', type: 'bigint' },
+  { name: 'occupancy', type: 'bigint' },
+  { name: 'depreciation', type: 'bigint' },
+  { name: 'grants_to_govts', type: 'bigint' },
+
   { name: 'source_file', type: 'text' },
   { name: 'form_type', type: 'text' },
 

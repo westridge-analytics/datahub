@@ -16,6 +16,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { neon } from '@neondatabase/serverless'
 import {
+  UPSERT_COLUMNS,
   buildFilingsUpsert,
   buildMissingEinsQuery,
   buildOrganizationsUpsert,
@@ -113,21 +114,27 @@ describe('Ingestion source precedence', { skip: url ? false : 'DATABASE_URL not 
     await q(`CREATE TABLE "${SCHEMA}".organizations (
       ein TEXT PRIMARY KEY, name TEXT NOT NULL
     )`)
+    // Derived from UPSERT_COLUMNS rather than hand-written. A hand-written
+    // mirror silently drifts: adding six columns to the write path broke every
+    // test here because the scratch table had never heard of them, and an
+    // earlier drift (name TEXT vs name TEXT NOT NULL) hid a regression that
+    // failed all 684 batches of a real load.
+    const PG: Record<string, string> = {
+      text: 'TEXT', date: 'DATE', int: 'INTEGER', bigint: 'BIGINT', boolean: 'BOOLEAN',
+    }
+    const cols = UPSERT_COLUMNS.map((c) => {
+      if (c.name === 'ein') return 'ein TEXT NOT NULL'
+      if (c.name === 'tax_period') return 'tax_period DATE NOT NULL'
+      if (c.name === 'data_source') return "data_source TEXT NOT NULL DEFAULT 'soi_extract'"
+      if (c.name === 'form_type') return "form_type TEXT DEFAULT '990'"
+      return `${c.name} ${PG[c.type]}`
+    })
     await q(`CREATE TABLE "${SCHEMA}".filings (
       id SERIAL PRIMARY KEY,
-      ein TEXT NOT NULL, tax_period DATE NOT NULL, fiscal_year INTEGER,
-      total_revenue BIGINT, total_expenses BIGINT, total_assets BIGINT,
-      total_liabilities BIGINT, total_net_assets BIGINT, contributions BIGINT,
-      program_revenue BIGINT, investment_income BIGINT, other_revenue BIGINT,
-      program_expenses BIGINT, ga_expenses BIGINT, fundraising_expenses BIGINT,
-      cash_equiv BIGINT, st_investments BIGINT, lt_investments BIGINT, ppe BIGINT,
-      unrestr_net_assets BIGINT, restr_net_assets BIGINT,
-      source_file TEXT, form_type TEXT DEFAULT '990',
-      data_source TEXT NOT NULL DEFAULT 'soi_extract',
-      object_id TEXT, dln TEXT, submission_date DATE, is_amended BOOLEAN,
-      num_employees INTEGER,
+      ${cols.join(',\n      ')},
       UNIQUE (ein, tax_period)
     )`)
+
     await q(`CREATE TABLE "${SCHEMA}".ingest_audit (
       id BIGSERIAL PRIMARY KEY, ein TEXT NOT NULL, tax_period DATE NOT NULL,
       form_type TEXT, action TEXT NOT NULL,
