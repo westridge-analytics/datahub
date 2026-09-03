@@ -12,6 +12,11 @@
 
 The API smoke test suite is at `scripts/test-api.mjs`. It covers default load, search, sorting, filters, and pagination against a running dev server.
 
+`scripts/test-sql-parity.mjs` (via `npm run test:parity`, and part of `npm test`) asserts the API
+and the bulk CLI generate **identical** upsert SQL from the shared write contract. Precedence
+decides what overwrites production data and the backfill runs through the CLI, so a divergence
+there would mean the CLI applying rules nothing else tests.
+
 Ingestion conflict/precedence tests are at `apps/web/lib/ingest/conflict.test.ts` and run under
 `npm run test:unit`. They execute the real production upsert SQL against a throwaway `ingest_test`
 schema they create and drop, so they need `DATABASE_URL` but never touch the `filings` table.
@@ -104,6 +109,32 @@ do not "fix" it.
 `mapEfileReturn` returns a discriminated result, never a bare null: `unsupported_form` (990-T),
 `missing_ein`, `bad_tax_period`, `malformed`, each with the return type, so the uploader can report
 a breakdown instead of a silent zero.
+
+### Bulk loading: `scripts/efile_ingest.py`
+```bash
+python scripts/efile_ingest.py --zip <path>            # local archive
+python scripts/efile_ingest.py --url  <archive url>    # streamed, never written to disk
+python scripts/efile_ingest.py --year 2025 --year 2026 # the whole 24-archive backfill
+python scripts/efile_ingest.py --zip <path> --dry-run --limit 250   # smoke test
+```
+`--on-conflict skip|overwrite` governs cross-source conflicts; e-file resubmissions are always
+resolved by submission date regardless. `--schema NAME` writes to a scratch schema. Use
+`DATABASE_URL_UNPOOLED` for long runs.
+
+**It holds no copy of its own rules.** It reads `efile-concordance.json` for the field map and
+`write-contract.json` for the columns and the precedence rule, and generates the same statement the
+API does — asserted by `npm run test:parity`.
+
+Two things that differ from the TypeScript writer and cannot be copied across:
+- **psycopg2 needs named placeholders** (`%(mode)s`), not positional. The precedence rule
+  interpolates the mode placeholder once per column, and a reused `%s` runs psycopg2 out of
+  parameters — `IndexError: list index out of range`, not a helpful message.
+- **The first VALUES tuple carries explicit casts.** Without them a batch where some column is NULL
+  in every row fails type inference.
+
+Re-loading an identical archive is idempotent in `filings` but records one `superseded` audit row
+per return, because the precedence rule uses `>=` on submission date so a genuine same-day
+resubmission still wins. Harmless, but `ingest_audit` grows on repeated re-runs of the same file.
 
 ### Reading an e-file archive
 `lib/ingest/efile-reader.ts` streams a monthly `.zip` — the largest is 521 MB compressed and ~2.7 GB

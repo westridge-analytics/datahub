@@ -21,7 +21,8 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { DOMParser } from '@xmldom/xmldom'
-import { UPSERT_COLUMNS, buildFilingsUpsert } from './upsert-sql.ts'
+import { UPSERT_COLUMNS, DATA_SOURCES, CONFLICT_MODES, buildFilingsUpsert } from './upsert-sql.ts'
+import contract from './write-contract.json' with { type: 'json' }
 import { mapEfileReturn, stripXmlBom } from './efile-map.ts'
 import concordance from './efile-concordance.json' with { type: 'json' }
 
@@ -47,6 +48,13 @@ describe('concordance ↔ write path conformance', () => {
   test('every derived column can be written', () => {
     const missing = concordance.derived.map((d) => d.column).filter((c) => !writable.has(c))
     assert.deepEqual(missing, [])
+  })
+
+  test('the TypeScript literals still match the shared contract the CLI reads', () => {
+    assert.deepEqual([...DATA_SOURCES], contract.data_sources)
+    assert.deepEqual([...CONFLICT_MODES], contract.conflict_modes)
+    assert.deepEqual(UPSERT_COLUMNS, contract.columns,
+      'UPSERT_COLUMNS must come from write-contract.json, not a second hand-written list')
   })
 
   test('the identity columns the writer keys on are the ones the mapper emits', () => {

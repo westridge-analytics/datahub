@@ -11,6 +11,8 @@
  * conflict.test.ts execute the exact production SQL against a scratch schema.
  */
 
+import contract from './write-contract.json' with { type: 'json' }
+
 export type PgType = 'text' | 'date' | 'int' | 'bigint' | 'boolean'
 
 export interface UpsertColumn {
@@ -20,107 +22,57 @@ export interface UpsertColumn {
   key?: true
 }
 
-export const UPSERT_COLUMNS: UpsertColumn[] = [
-  { name: 'ein', type: 'text', key: true },
-  { name: 'tax_period', type: 'date', key: true },
-  { name: 'fiscal_year', type: 'int' },
+/** The write contract, shared with scripts/ingest.py — see write-contract.json. */
+export const UPSERT_COLUMNS: UpsertColumn[] = contract.columns as UpsertColumn[]
 
-  { name: 'total_revenue', type: 'bigint' },
-  { name: 'total_expenses', type: 'bigint' },
-  { name: 'total_assets', type: 'bigint' },
-  { name: 'total_liabilities', type: 'bigint' },
-  { name: 'total_net_assets', type: 'bigint' },
-  { name: 'contributions', type: 'bigint' },
-  { name: 'program_revenue', type: 'bigint' },
-  { name: 'investment_income', type: 'bigint' },
-  { name: 'other_revenue', type: 'bigint' },
-  { name: 'program_expenses', type: 'bigint' },
-  { name: 'ga_expenses', type: 'bigint' },
-  { name: 'fundraising_expenses', type: 'bigint' },
-  { name: 'cash_equiv', type: 'bigint' },
-  { name: 'st_investments', type: 'bigint' },
-  { name: 'lt_investments', type: 'bigint' },
-  { name: 'ppe', type: 'bigint' },
-  { name: 'unrestr_net_assets', type: 'bigint' },
-  { name: 'restr_net_assets', type: 'bigint' },
-
-  // Present in `filings` and mapped by the e-file concordance. Omitting them
-  // here does not error — the value is simply dropped on the way to the
-  // database, which is why conformance.test.ts asserts that every concordance
-  // column appears in this list.
-  { name: 'num_employees', type: 'int' },
-  { name: 'legal_fees', type: 'bigint' },
-  { name: 'accounting_fees', type: 'bigint' },
-  { name: 'occupancy', type: 'bigint' },
-  { name: 'depreciation', type: 'bigint' },
-  { name: 'grants_to_govts', type: 'bigint' },
-
-  { name: 'source_file', type: 'text' },
-  { name: 'form_type', type: 'text' },
-
-  // provenance — migrate_efile_provenance.sql
-  { name: 'data_source', type: 'text' },
-  { name: 'object_id', type: 'text' },
-  { name: 'dln', type: 'text' },
-  { name: 'submission_date', type: 'date' },
-  { name: 'is_amended', type: 'boolean' },
-]
-
+// Declared as literals so TypeScript can narrow on them; conformance.test.ts
+// asserts they still match write-contract.json, which is what the CLI reads.
 export const DATA_SOURCES = ['soi_extract', 'efile_xml'] as const
 export type DataSource = (typeof DATA_SOURCES)[number]
 
 export const CONFLICT_MODES = ['skip', 'overwrite'] as const
 export type ConflictMode = (typeof CONFLICT_MODES)[number]
 
+function fill(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (whole, key: string) =>
+    key in vars ? vars[key] : whole,
+  )
+}
+
 /**
  * Whether an incoming row beats the row already stored.
  *
- * Two distinct rules, and the distinction matters:
- *
- *  - **e-file over e-file** is a resubmission, not a conflict. The later
- *    SUB_DATE wins automatically; the operator is never asked. (Decision 3.)
- *  - **everything else** is a genuine cross-source conflict and is governed by
- *    the operator's skip/overwrite choice for this load. (Decision 2.)
- *
- * `incoming` and `existing` are SQL aliases: `EXCLUDED` / `filings` inside an
- * ON CONFLICT clause, or CTE aliases elsewhere. `modeParam` is the $N
- * placeholder holding 'skip' | 'overwrite'.
+ * The rule itself lives in write-contract.json so the bulk CLI applies exactly
+ * the same one. `incoming` and `existing` are SQL aliases: `EXCLUDED` /
+ * `filings` inside an ON CONFLICT clause, or CTE aliases elsewhere.
+ * `modeParam` is the $N placeholder holding 'skip' | 'overwrite'.
  */
 export function incomingWinsSql(
   incoming: string,
   existing: string,
   modeParam: string,
 ): string {
-  const bothEfile =
-    `${incoming}.data_source = 'efile_xml' AND ${existing}.data_source = 'efile_xml'`
-  return `(
-    (${bothEfile}
-       AND ${incoming}.submission_date IS NOT NULL
-       AND (${existing}.submission_date IS NULL
-            OR ${incoming}.submission_date >= ${existing}.submission_date))
-    OR
-    (NOT (${bothEfile}) AND ${modeParam} = 'overwrite')
-  )`
+  const bothEfile = fill(contract.precedence.both_efile, { incoming, existing })
+  return fill(contract.precedence.incoming_wins, {
+    incoming, existing, mode: modeParam, both_efile: bothEfile,
+  })
 }
 
 /**
- * What to record in ingest_audit for a row that hit an existing row.
- * Mirrors incomingWinsSql — a supersession is an e-file resubmission that won;
- * anything else that won is an overwrite; anything that lost was skipped.
+ * What to record in ingest_audit for a row that hit an existing row: a
+ * supersession is an e-file resubmission that won, anything else that won is an
+ * overwrite, anything that lost was skipped.
  */
 export function auditActionSql(
   incoming: string,
   existing: string,
   modeParam: string,
 ): string {
-  const bothEfile =
-    `${incoming}.data_source = 'efile_xml' AND ${existing}.data_source = 'efile_xml'`
-  const wins = incomingWinsSql(incoming, existing, modeParam)
-  return `CASE
-    WHEN NOT ${wins} THEN 'skipped'
-    WHEN ${bothEfile} THEN 'superseded'
-    ELSE 'overwritten'
-  END`
+  const bothEfile = fill(contract.precedence.both_efile, { incoming, existing })
+  return fill(contract.precedence.audit_action, {
+    incoming_wins: incomingWinsSql(incoming, existing, modeParam),
+    both_efile: bothEfile,
+  })
 }
 
 export interface BuildOptions {

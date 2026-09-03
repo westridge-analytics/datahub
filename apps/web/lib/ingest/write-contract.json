@@ -1,0 +1,79 @@
+{
+  "$comment": [
+    "The ingestion write contract, shared by every writer.",
+    "",
+    "`lib/ingest/upsert-sql.ts` (the API) and `scripts/ingest.py` (the bulk CLI)",
+    "both read this file. Neither may hold its own copy of the column list or the",
+    "precedence rule — those rules decide what overwrites production data, so two",
+    "implementations would be two chances to get it wrong, and only one of them",
+    "would be the one under test.",
+    "",
+    "A column present in the concordance but absent here is SILENTLY DROPPED on",
+    "the way to the database, not rejected. conformance.test.ts asserts the two",
+    "stay in step; six columns had already gone missing that way.",
+    "",
+    "Templates use {incoming}, {existing} and {mode} placeholders. {incoming} and",
+    "{existing} are SQL aliases — EXCLUDED / filings inside an ON CONFLICT clause,",
+    "or CTE aliases elsewhere. {mode} is the placeholder bound to",
+    "'skip' | 'overwrite'."
+  ],
+
+  "columns": [
+    { "name": "ein", "type": "text", "key": true },
+    { "name": "tax_period", "type": "date", "key": true },
+    { "name": "fiscal_year", "type": "int" },
+
+    { "name": "total_revenue", "type": "bigint" },
+    { "name": "total_expenses", "type": "bigint" },
+    { "name": "total_assets", "type": "bigint" },
+    { "name": "total_liabilities", "type": "bigint" },
+    { "name": "total_net_assets", "type": "bigint" },
+    { "name": "contributions", "type": "bigint" },
+    { "name": "program_revenue", "type": "bigint" },
+    { "name": "investment_income", "type": "bigint" },
+    { "name": "other_revenue", "type": "bigint" },
+    { "name": "program_expenses", "type": "bigint" },
+    { "name": "ga_expenses", "type": "bigint" },
+    { "name": "fundraising_expenses", "type": "bigint" },
+    { "name": "cash_equiv", "type": "bigint" },
+    { "name": "st_investments", "type": "bigint" },
+    { "name": "lt_investments", "type": "bigint" },
+    { "name": "ppe", "type": "bigint" },
+    { "name": "unrestr_net_assets", "type": "bigint" },
+    { "name": "restr_net_assets", "type": "bigint" },
+
+    { "name": "num_employees", "type": "int" },
+    { "name": "legal_fees", "type": "bigint" },
+    { "name": "accounting_fees", "type": "bigint" },
+    { "name": "occupancy", "type": "bigint" },
+    { "name": "depreciation", "type": "bigint" },
+    { "name": "grants_to_govts", "type": "bigint" },
+
+    { "name": "source_file", "type": "text" },
+    { "name": "form_type", "type": "text" },
+
+    { "name": "data_source", "type": "text" },
+    { "name": "object_id", "type": "text" },
+    { "name": "dln", "type": "text" },
+    { "name": "submission_date", "type": "date" },
+    { "name": "is_amended", "type": "boolean" }
+  ],
+
+  "precedence": {
+    "$comment": [
+      "Two distinct rules, and the distinction matters:",
+      "  e-file over e-file is a RESUBMISSION, not a conflict — the later",
+      "  SUB_DATE wins automatically and the operator is never asked;",
+      "  everything else is a cross-source conflict, governed by the operator's",
+      "  skip/overwrite choice for that load.",
+      "A winning row uses COALESCE(incoming, existing) per column, so a load may",
+      "add information but can never blank a populated value."
+    ],
+    "both_efile": "{incoming}.data_source = 'efile_xml' AND {existing}.data_source = 'efile_xml'",
+    "incoming_wins": "(\n    ({both_efile}\n       AND {incoming}.submission_date IS NOT NULL\n       AND ({existing}.submission_date IS NULL\n            OR {incoming}.submission_date >= {existing}.submission_date))\n    OR\n    (NOT ({both_efile}) AND {mode} = 'overwrite')\n  )",
+    "audit_action": "CASE\n    WHEN NOT {incoming_wins} THEN 'skipped'\n    WHEN {both_efile} THEN 'superseded'\n    ELSE 'overwritten'\n  END"
+  },
+
+  "data_sources": ["soi_extract", "efile_xml"],
+  "conflict_modes": ["skip", "overwrite"]
+}

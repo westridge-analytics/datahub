@@ -8,8 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test:unit": "node --test lib/metrics/*.test.ts lib/ingest/*.test.ts",
-    "test": "npm run test:unit && node ../../scripts/test-api.mjs",
-    "test:ci": "npm run test:unit && { next dev &>/tmp/nextdev-test.log & sleep 8 && node ../../scripts/test-api.mjs; STATUS=$?; kill %1 2>/dev/null; exit $STATUS; }"
+    "test": "npm run test:unit && npm run test:parity && node ../../scripts/test-api.mjs",
+    "test:ci": "npm run test:unit && npm run test:parity && { next dev &>/tmp/nextdev-test.log & sleep 8 && node ../../scripts/test-api.mjs; STATUS=$?; kill %1 2>/dev/null; exit $STATUS; }",
+    "test:parity": "node ../../scripts/test-sql-parity.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
