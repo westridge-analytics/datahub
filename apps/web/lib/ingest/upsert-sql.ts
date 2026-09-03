@@ -126,20 +126,32 @@ function table(name: string, opts?: BuildOptions): string {
   return opts?.schema ? `"${opts.schema}".${name}` : name
 }
 
-/** Ensure an organizations row exists per EIN; never rename an existing org. */
+/**
+ * Upsert organization names — for rows that actually carry one.
+ *
+ * Returns null when no row has a name, which is the normal case for the SOI
+ * annual extracts: they carry no organization name column at all. Names come
+ * from the IRS EO BMF (scripts/ingest.py --eobmf), which is authoritative, so a
+ * filing load must never rename an existing organization and must never invent
+ * a name for a new one.
+ *
+ * `organizations.name` is NOT NULL. Sending an explicit NULL here fails the
+ * entire batch — exactly what broke all 684 batches once the uploader started
+ * parsing rows successfully for the first time.
+ */
 export function buildOrganizationsUpsert(
   rows: Record<string, unknown>[],
   opts?: BuildOptions,
-): BuiltQuery {
-  const seen = new Map<string, string | null>()
+): BuiltQuery | null {
+  const named = new Map<string, string>()
   for (const r of rows) {
-    const ein = String(r.ein)
-    const name = typeof r.name === 'string' && r.name.trim() !== '' ? r.name.trim() : null
-    if (!seen.has(ein) || (seen.get(ein) === null && name !== null)) seen.set(ein, name)
+    const name = typeof r.name === 'string' ? r.name.trim() : ''
+    if (name !== '' && !named.has(String(r.ein))) named.set(String(r.ein), name)
   }
+  if (named.size === 0) return null
 
   const params: unknown[] = []
-  const values = [...seen.entries()].map(([ein, name]) => {
+  const values = [...named.entries()].map(([ein, name]) => {
     params.push(ein, name)
     return `($${params.length - 1}, $${params.length})`
   })
@@ -149,8 +161,31 @@ export function buildOrganizationsUpsert(
           VALUES ${values.join(', ')}
           ON CONFLICT (ein) DO UPDATE
             SET name = EXCLUDED.name
-            WHERE ${table('organizations', opts)}.name IS NULL AND EXCLUDED.name IS NOT NULL`,
+            WHERE ${table('organizations', opts)}.name IS NULL`,
     params,
+  }
+}
+
+/**
+ * Which of these EINs have no organizations row.
+ *
+ * filings.ein is a foreign key, so a filing for an unknown EIN cannot be
+ * stored. Since the extracts carry no name and organizations.name is NOT NULL,
+ * such an organization cannot be conjured either — so those filings are skipped
+ * and reported, with the fix being to load a current BMF. A nameless
+ * placeholder organization would be unsearchable and would render blank in the
+ * table, which is worse than a reported skip.
+ */
+export function buildMissingEinsQuery(
+  eins: string[],
+  opts?: BuildOptions,
+): BuiltQuery {
+  return {
+    sql: `SELECT e AS ein FROM unnest($1::text[]) e
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${table('organizations', opts)} o WHERE o.ein = e
+          )`,
+    params: [eins],
   }
 }
 

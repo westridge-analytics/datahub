@@ -70,6 +70,19 @@ had always normalised keys, which is why the Python path worked and masked it. C
 PapaParse is called with the default comma delimiter, so `mapRow` finds no `ein` and filters
 everything. Use `scripts/ingest.py` for .dat files.
 
+### Organization names come from the BMF, never from a filing load
+`organizations.name` is `NOT NULL`, and the SOI extracts carry **no name column at all** — only the
+EO BMF does. So `buildOrganizationsUpsert` returns `null` when no incoming row has a name, and the
+batch route skips the write entirely. Sending an explicit `NULL` fails the whole batch; that broke
+all 684 batches of a 341,514-row load the first time the uploader parsed rows successfully.
+
+`filings.ein` is a foreign key, so a filing for an EIN with no organization row cannot be stored —
+and cannot be conjured either, with no name available. Those rows are **skipped and reported**
+(`skipped_unknown_ein`, plus a sample of EINs), not silently dropped and not failed. About 1% of
+`24eoextract990.csv` (3,354 of 323,449 EINs); the remedy is loading a current BMF. A nameless
+placeholder org would be unsearchable and render blank in the table, which is worse than a
+reported skip.
+
 ### Ingestion sources and conflict resolution
 `filings.data_source` distinguishes `'soi_extract'` (IRS SOI annual extracts — authoritative,
 lagging) from `'efile_xml'` (monthly e-file archives — near-real-time, raw as filed). All rows

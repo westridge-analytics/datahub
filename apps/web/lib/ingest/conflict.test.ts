@@ -15,7 +15,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { neon } from '@neondatabase/serverless'
-import { buildFilingsUpsert, buildPreflightQuery } from './upsert-sql.ts'
+import {
+  buildFilingsUpsert,
+  buildMissingEinsQuery,
+  buildOrganizationsUpsert,
+  buildPreflightQuery,
+} from './upsert-sql.ts'
 import type { ConflictMode, DataSource } from './upsert-sql.ts'
 
 const SCHEMA = 'ingest_test'
@@ -62,6 +67,7 @@ async function load(
   mode: ConflictMode,
   sourceFile = 'test.csv',
 ): Promise<Record<string, number>> {
+  await seedOrgs(rows)
   const built = buildFilingsUpsert(rows, dataSource, mode, sourceFile, OPTS)
   const audited = await q<{ action: string }>(built.sql, built.params)
   const counts = { inserted: rows.length - audited.length, overwritten: 0, superseded: 0, skipped: 0 }
@@ -87,14 +93,25 @@ async function reset() {
   await q(`TRUNCATE "${SCHEMA}".filings, "${SCHEMA}".ingest_audit, "${SCHEMA}".organizations`)
 }
 
+/** The precedence tests care about filings, not the FK; give every EIN an org. */
+async function seedOrgs(rows: Row[]) {
+  const eins = [...new Set(rows.map((r) => r.ein))]
+  const params: unknown[] = []
+  const values = eins.map((e) => { params.push(e); return `($${params.length}, 'TEST ORG')` })
+  await q(`INSERT INTO "${SCHEMA}".organizations (ein, name) VALUES ${values.join(',')}
+           ON CONFLICT (ein) DO NOTHING`, params)
+}
+
 describe('Ingestion source precedence', { skip: url ? false : 'DATABASE_URL not set' }, () => {
   before(async () => {
     await q(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`)
     await q(`CREATE SCHEMA "${SCHEMA}"`)
     // Mirror only the columns the write path touches, plus one (num_employees)
     // that the uploader never sends — that is what proves COALESCE behaviour.
+    // name is NOT NULL in production; the scratch schema must match or the
+    // regression that broke all 684 batches would not reproduce here.
     await q(`CREATE TABLE "${SCHEMA}".organizations (
-      ein TEXT PRIMARY KEY, name TEXT
+      ein TEXT PRIMARY KEY, name TEXT NOT NULL
     )`)
     await q(`CREATE TABLE "${SCHEMA}".filings (
       id SERIAL PRIMARY KEY,
@@ -294,5 +311,53 @@ describe('Ingestion source precedence', { skip: url ? false : 'DATABASE_URL not 
       { inserted: c.inserted, superseded: c.superseded, skipped: c.skipped, overwritten: c.overwritten },
       { inserted: 1, superseded: 1, skipped: 1, overwritten: 0 },
     )
+  })
+  // ── organizations / foreign key ────────────────────────────────────────────
+  // These cover the failure that broke every batch of a real 341,514-row load:
+  // organizations.name is NOT NULL, the SOI extracts carry no name column, and
+  // the org upsert sent an explicit NULL for all of them.
+
+  test('a nameless load issues no organizations write at all', async () => {
+    await reset()
+    const rows = [row({ ein: '31-1111111', tax_period: '2024-12-01', total_revenue: 1 })]
+    assert.equal(
+      buildOrganizationsUpsert(rows, OPTS), null,
+      'SOI rows have no name — sending NULL into a NOT NULL column fails the batch',
+    )
+  })
+
+  test('a load that does carry names writes them, without renaming known orgs', async () => {
+    await reset()
+    await q(`INSERT INTO "${SCHEMA}".organizations (ein, name) VALUES ('32-2222222','BMF CANONICAL NAME')`)
+
+    const built = buildOrganizationsUpsert([
+      { ein: '32-2222222', name: 'E-FILE SUPPLIED NAME' },
+      { ein: '33-3333333', name: 'BRAND NEW ORG' },
+    ], OPTS)
+    assert.ok(built, 'rows with names must produce a write')
+    await q(built.sql, built.params)
+
+    const r = await q(`SELECT ein, name FROM "${SCHEMA}".organizations ORDER BY ein`)
+    const byEin = Object.fromEntries(r.map((x) => [x.ein, x.name]))
+    assert.equal(byEin['32-2222222'], 'BMF CANONICAL NAME', 'the BMF name is authoritative')
+    assert.equal(byEin['33-3333333'], 'BRAND NEW ORG', 'a genuinely new org is created')
+  })
+
+  test('buildMissingEinsQuery finds exactly the EINs with no organization', async () => {
+    await reset()
+    await q(`INSERT INTO "${SCHEMA}".organizations (ein, name) VALUES ('34-4444444','KNOWN ORG')`)
+
+    const built = buildMissingEinsQuery(['34-4444444', '35-5555555', '36-6666666'], OPTS)
+    const missing = (await q(built.sql, built.params)).map((r) => r.ein).sort()
+    assert.deepEqual(missing, ['35-5555555', '36-6666666'])
+  })
+
+  test('a filing for a known EIN loads normally', async () => {
+    await reset()
+    await q(`INSERT INTO "${SCHEMA}".organizations (ein, name) VALUES ('37-7777777','KNOWN ORG')`)
+    const c = await load([row({ ein: '37-7777777', tax_period: '2024-12-01', total_revenue: 42 })],
+      'soi_extract', 'skip')
+    assert.equal(c.inserted, 1)
+    assert.equal(Number((await stored('37-7777777', '2024-12-01')).total_revenue), 42)
   })
 })

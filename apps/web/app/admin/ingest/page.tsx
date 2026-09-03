@@ -94,6 +94,7 @@ interface Progress {
   overwritten: number
   superseded: number
   skipped: number
+  skippedUnknownEin: number
 }
 
 /** What a load is about to land on, counted before anything is written. */
@@ -106,7 +107,7 @@ interface Preflight {
 
 const ZERO_PROGRESS: Progress = {
   parsed: 0, total: 0, batched: 0, errors: 0,
-  inserted: 0, overwritten: 0, superseded: 0, skipped: 0,
+  inserted: 0, overwritten: 0, superseded: 0, skipped: 0, skippedUnknownEin: 0,
 }
 
 // ── component ────────────────────────────────────────────────────────────────
@@ -230,7 +231,8 @@ export default function IngestPage() {
       }
     }
 
-    let counts = { inserted: 0, overwritten: 0, superseded: 0, skipped: 0 }
+    let counts = { inserted: 0, overwritten: 0, superseded: 0, skipped: 0, skippedUnknownEin: 0 }
+    let unknownSample: string[] = []
     try {
       const body = await res.json()
       counts = {
@@ -238,14 +240,24 @@ export default function IngestPage() {
         overwritten: body.overwritten ?? 0,
         superseded: body.superseded ?? 0,
         skipped: body.skipped ?? 0,
+        skippedUnknownEin: body.skipped_unknown_ein ?? 0,
       }
+      unknownSample = body.unknown_eins ?? []
     } catch { /* counts stay zero; the rows still landed */ }
+
+    if (counts.skippedUnknownEin > 0 && unknownSample.length > 0) {
+      addLog(
+        `\u26a0 Batch ${batchNum}: ${counts.skippedUnknownEin} row(s) skipped — EIN not in the ` +
+        `organizations table (e.g. ${unknownSample.slice(0, 3).join(', ')})`,
+      )
+    }
 
     const detail = [
       counts.inserted && `${counts.inserted} new`,
       counts.overwritten && `${counts.overwritten} replaced`,
       counts.superseded && `${counts.superseded} superseded`,
       counts.skipped && `${counts.skipped} skipped`,
+      counts.skippedUnknownEin && `${counts.skippedUnknownEin} unknown EIN`,
     ].filter(Boolean).join(', ')
     addLog(`Batch ${batchNum} complete (${batch.length} rows${detail ? ` — ${detail}` : ''})`)
 
@@ -256,6 +268,7 @@ export default function IngestPage() {
       overwritten: p.overwritten + counts.overwritten,
       superseded: p.superseded + counts.superseded,
       skipped: p.skipped + counts.skipped,
+      skippedUnknownEin: p.skippedUnknownEin + counts.skippedUnknownEin,
     }))
     return true
   }
@@ -1045,6 +1058,11 @@ export default function IngestPage() {
               )}
               {progress.skipped > 0 && (
                 <span><strong style={{ color: '#10232B' }}>{progress.skipped.toLocaleString()}</strong> skipped</span>
+              )}
+              {progress.skippedUnknownEin > 0 && (
+                <span style={{ color: '#7A5C3A' }}>
+                  <strong>{progress.skippedUnknownEin.toLocaleString()}</strong> unknown EIN
+                </span>
               )}
               {status === 'done' && (
                 <span style={{ color: '#4A8A6A', fontWeight: 600 }}>Complete</span>

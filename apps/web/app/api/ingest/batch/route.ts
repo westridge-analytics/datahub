@@ -4,6 +4,7 @@ import {
   DATA_SOURCES,
   CONFLICT_MODES,
   buildFilingsUpsert,
+  buildMissingEinsQuery,
   buildOrganizationsUpsert,
   type ConflictMode,
   type DataSource,
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
   if (rows.length === 0) {
     return Response.json({
       processed: 0, inserted: 0, overwritten: 0, superseded: 0, skipped: 0,
+      skipped_unknown_ein: 0, unknown_eins: [],
     })
   }
   if (rows.length > MAX_ROWS) {
@@ -71,21 +73,41 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Names, only where the incoming rows actually carry one. The SOI extracts
+    // do not; the e-file archives do. Returns null when there is nothing to do.
     const orgs = buildOrganizationsUpsert(rows)
-    await rawQuery(orgs.sql, orgs.params)
+    if (orgs) await rawQuery(orgs.sql, orgs.params)
 
-    const upsert = buildFilingsUpsert(rows, dataSource, mode, body.source_file)
-    const audited = await rawQuery<{ action: string }>(upsert.sql, upsert.params)
+    // filings.ein is a foreign key. An EIN with no organization row cannot be
+    // stored, and cannot be created either without a name, so skip those rows
+    // and report them rather than failing the whole batch.
+    const eins = [...new Set(rows.map((r) => String(r.ein)))]
+    const missingQ = buildMissingEinsQuery(eins)
+    const missing = await rawQuery<{ ein: string }>(missingQ.sql, missingQ.params)
+    const unknown = new Set(missing.map((m) => m.ein))
+
+    const loadable = unknown.size === 0 ? rows : rows.filter((r) => !unknown.has(String(r.ein)))
+    const skippedUnknown = rows.length - loadable.length
 
     const counts = { inserted: 0, overwritten: 0, superseded: 0, skipped: 0 }
-    for (const a of audited) {
-      if (a.action === 'overwritten') counts.overwritten++
-      else if (a.action === 'superseded') counts.superseded++
-      else counts.skipped++
+    if (loadable.length > 0) {
+      const upsert = buildFilingsUpsert(loadable, dataSource, mode, body.source_file)
+      const audited = await rawQuery<{ action: string }>(upsert.sql, upsert.params)
+      for (const a of audited) {
+        if (a.action === 'overwritten') counts.overwritten++
+        else if (a.action === 'superseded') counts.superseded++
+        else counts.skipped++
+      }
+      counts.inserted = loadable.length - audited.length
     }
-    counts.inserted = rows.length - audited.length
 
-    return Response.json({ processed: rows.length, ...counts })
+    return Response.json({
+      processed: rows.length,
+      ...counts,
+      skipped_unknown_ein: skippedUnknown,
+      // A sample, so the operator can look one up without the response bloating.
+      unknown_eins: [...unknown].slice(0, 5),
+    })
   } catch (err) {
     console.error('[POST /api/ingest/batch]', err)
     const message = err instanceof Error ? err.message : 'Unknown error'
