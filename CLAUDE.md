@@ -66,9 +66,14 @@ the CSV-era extracts failed `isForm990Row` and the uploader silently loaded noth
 had always normalised keys, which is why the Python path worked and masked it. Covered now by
 `lib/ingest/field-map.test.ts`, whose fixtures use the real header spellings.
 
-**The .dat path in the browser uploader is still broken** — those files are space-delimited but
-PapaParse is called with the default comma delimiter, so `mapRow` finds no `ein` and filters
-everything. Use `scripts/ingest.py` for .dat files.
+**The browser uploader refuses .dat files by design** (`unsupportedReason` in `field-map.ts`),
+showing a message that points at `scripts/ingest.py`. It never parsed them correctly: they are
+space-delimited, and PapaParse only guesses among `,` `\t` `|` `;` and two control chars — never
+space — so the header collapsed to a single column and every row was filtered. Rather than fix a
+parser for a dead format, the screen now declines it: all 17 .dat files are already loaded
+(3,444,075 rows, FY1976–2017) and the IRS switched to CSV at `18eoextract990.csv`, so no new .dat
+will ever be published. If .dat parsing is ever genuinely needed, pass `delimiter: ' '` for that
+format — `mapRow` already has a correct dat branch and already handles `tax_prd` vs `tax_pd`.
 
 ### Organization names come from the BMF, never from a filing load
 `organizations.name` is `NOT NULL`, and the SOI extracts carry **no name column at all** — only the

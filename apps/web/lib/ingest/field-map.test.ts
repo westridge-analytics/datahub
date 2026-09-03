@@ -21,6 +21,7 @@ import {
   normalizeEin,
   taxPeriodToDate,
   parseNumber,
+  unsupportedReason,
 } from './field-map.ts'
 
 /** Apply canonicalHeader the way PapaParse's transformHeader does. */
@@ -133,5 +134,22 @@ describe('helpers', () => {
     assert.equal(parseNumber(undefined), null)
     assert.equal(parseNumber('0'), 0)
     assert.equal(parseNumber('4120556'), 4120556)
+  })
+})
+
+describe('unsupportedReason', () => {
+  test('refuses .dat files and names the alternative', () => {
+    const why = unsupportedReason('py12_990.dat')
+    assert.ok(why, '.dat must be refused, not silently loaded as comma-delimited')
+    assert.match(why, /ingest\.py/, 'the message must tell the operator what to use instead')
+  })
+
+  test('refuses .dat regardless of case', () => {
+    assert.ok(unsupportedReason('17EOFINEXTRACT990.DAT'))
+  })
+
+  test('accepts the CSV extracts', () => {
+    assert.equal(unsupportedReason('24eoextract990.csv'), null)
+    assert.equal(unsupportedReason('18eoextract990.csv'), null)
   })
 })

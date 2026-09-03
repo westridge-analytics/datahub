@@ -58,6 +58,23 @@ export function isForm990Row(row: Record<string, string>, format: FileFormat): b
   return indicator?.trim().toUpperCase() === 'E'
 }
 
+/**
+ * Why this screen cannot load the file, or null if it can.
+ *
+ * Returning a reason rather than silently ignoring the file is the point: the
+ * two worst bugs in this uploader both presented as a successful-looking run
+ * that loaded nothing.
+ */
+export function unsupportedReason(name: string): string | null {
+  if (name.toLowerCase().endsWith('.dat')) {
+    return 'This screen does not load .dat files. The space-delimited extracts ' +
+      '(py12–py14, 15eo–17eo) are already loaded in full and the IRS no longer ' +
+      'publishes that format. If you need to reload one, use the command line: ' +
+      'python scripts/ingest.py --files <filename>'
+  }
+  return null
+}
+
 export function normalizeEin(raw: string): string {
   const digits = raw.replace(/\D/g, '').padStart(9, '0')
   return `${digits.slice(0, 2)}-${digits.slice(2)}`

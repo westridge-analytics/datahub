@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback } from 'react'
 import Papa from 'papaparse'
-import { canonicalHeader, detectFormat, isForm990Row, mapRow, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
+import { canonicalHeader, detectFormat, isForm990Row, mapRow, unsupportedReason, type FileFormat, type MappedRow } from '@/lib/ingest/field-map'
 
 // ── constants ────────────────────────────────────────────────────────────────
 
@@ -29,11 +29,14 @@ const BYTES_PER_ROW_ESTIMATE = 690
 // later phase and will set this per file.
 const DATA_SOURCE = 'soi_extract'
 
+// CSV only. The .dat-era extracts (py12–py14, 15eo–17eo) are a closed
+// historical set: all 17 files are already loaded (3,444,075 rows, FY1976–2017),
+// and the IRS switched the extract format to CSV at 18eoextract990.csv, so no
+// new .dat file will ever be published. This screen used to advertise .dat
+// support it did not have — PapaParse guesses among , \t | ; and never space,
+// so a space-delimited file collapsed to a single column and loaded nothing.
+// Use scripts/ingest.py for .dat files; refusal lives in field-map.ts.
 const KNOWN_PATTERNS = [
-  'py12_990.dat',
-  '15eofinextract990.dat',
-  '16eofinextract990.dat',
-  '17eofinextract990.dat',
   '18eoextract990.csv',
   '19eoextract990.csv',
   '20eoextract990.csv',
@@ -46,9 +49,7 @@ const KNOWN_PATTERNS = [
 function isKnownFilename(name: string): boolean {
   const lower = name.toLowerCase()
   return KNOWN_PATTERNS.some((p) => lower.includes(p.replace(/^\d+/, ''))) ||
-    /^\d{2}eofinextract990\.(dat|csv)$/.test(lower) ||
-    /^\d{2}eoextract990\.(dat|csv)$/.test(lower) ||
-    lower === 'py12_990.dat'
+    /^\d{2}eoextract990\.csv$/.test(lower)
 }
 
 /** Run tasks with at most `limit` in flight, preserving completion effects. */
@@ -120,6 +121,8 @@ export default function IngestPage() {
   const [preflight, setPreflight] = useState<Preflight | null>(null)
   // Exact row count, known once the conflict check has read the whole file.
   const [rowCount, setRowCount] = useState<number | null>(null)
+  /** Non-null when the selected file is a format this screen refuses. */
+  const [unsupported, setUnsupported] = useState<string | null>(null)
   const [mode, setMode] = useState<ConflictMode>('skip')
   const [logs, setLogs] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -143,6 +146,7 @@ export default function IngestPage() {
     const fmt = detectFormat(selected.name)
     setFile(selected)
     setFormat(fmt)
+    setUnsupported(unsupportedReason(selected.name))
     setStatus('idle')
     setProgress(ZERO_PROGRESS)
     setPreflight(null)
@@ -283,7 +287,7 @@ export default function IngestPage() {
    * JS objects is a far worse trade than parsing the file twice.
    */
   function runPreflight() {
-    if (!file || !format) return
+    if (!file || !format || unsupported) return
     cancelRef.current = false
     setStatus('checking')
     setPreflight(null)
@@ -365,7 +369,7 @@ export default function IngestPage() {
   }
 
   function startIngestion() {
-    if (!file || !format) return
+    if (!file || !format || unsupported) return
     cancelRef.current = false
     setStatus('parsing')
     setProgress(ZERO_PROGRESS)
@@ -508,6 +512,7 @@ export default function IngestPage() {
   const isChecking = status === 'checking'
   const isRunning = status === 'parsing' || status === 'uploading'
   const isBusy = isChecking || isRunning
+  const canLoad = !!file && !!format && !unsupported
 
   return (
     // The app shell is fixed-viewport — globals.css sets `html, body {
@@ -609,7 +614,7 @@ export default function IngestPage() {
               Drag &amp; drop a file here
             </p>
             <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#3D5A63' }}>
-              or click to browse
+              or click to browse — CSV extracts (18eo onwards)
             </p>
             <button
               onClick={(e) => {
@@ -632,7 +637,7 @@ export default function IngestPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".dat,.csv,.txt"
+              accept=".csv,.txt"
               style={{ display: 'none' }}
               onChange={handleInputChange}
             />
@@ -671,13 +676,33 @@ export default function IngestPage() {
                       letterSpacing: '0.03em',
                     }}
                   >
-                    {format === 'dat' ? 'Space-delimited DAT' : 'Comma-separated CSV'}
+                    {format === 'dat' ? 'Unsupported DAT' : 'Comma-separated CSV'}
                   </span>
                 )}
               </div>
 
               {/* Unknown filename warning */}
-              {file && !isKnownFilename(file.name) && (
+              {unsupported && (
+                <div
+                  style={{
+                    marginTop: '10px',
+                    padding: '12px 14px',
+                    backgroundColor: '#FAEBE9',
+                    border: '1px solid #B83228',
+                    borderRadius: '4px',
+                    fontSize: '13px',
+                    color: '#B83228',
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <strong style={{ display: 'block', marginBottom: '4px' }}>
+                    Unsupported file format
+                  </strong>
+                  {unsupported}
+                </div>
+              )}
+
+              {file && !unsupported && !isKnownFilename(file.name) && (
                 <div
                   style={{
                     marginTop: '10px',
@@ -740,7 +765,9 @@ export default function IngestPage() {
                 <dd style={{ margin: 0, color: '#10232B' }}>{formatBytes(file.size)}</dd>
                 <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Detected format</dt>
                 <dd style={{ margin: 0, color: '#10232B' }}>
-                  {format === 'dat' ? 'Space-delimited DAT' : format === 'csv' ? 'Comma-separated CSV' : '—'}
+                  {format === 'dat'
+                    ? 'Space-delimited DAT — not supported here'
+                    : format === 'csv' ? 'Comma-separated CSV' : '—'}
                 </dd>
                 <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Estimated rows</dt>
                 <dd style={{ margin: 0, color: '#10232B' }}>
@@ -791,16 +818,16 @@ export default function IngestPage() {
 
               <button
                 onClick={runPreflight}
-                disabled={!file || !format || isBusy}
+                disabled={!canLoad || isBusy}
                 style={{
-                  backgroundColor: !file || !format || isBusy ? '#BDD3DC' : '#6F99CC',
+                  backgroundColor: !canLoad || isBusy ? '#BDD3DC' : '#6F99CC',
                   color: '#FFFFFF',
                   border: 'none',
                   borderRadius: '5px',
                   padding: '10px 28px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  cursor: !file || !format || isBusy ? 'not-allowed' : 'pointer',
+                  cursor: !canLoad || isBusy ? 'not-allowed' : 'pointer',
                   transition: 'background-color 0.15s',
                 }}
               >
@@ -939,16 +966,16 @@ export default function IngestPage() {
 
             <button
               onClick={startIngestion}
-              disabled={!file || !format || isBusy}
+              disabled={!canLoad || isBusy}
               style={{
-                backgroundColor: !file || !format || isBusy ? '#BDD3DC' : '#6F99CC',
+                backgroundColor: !canLoad || isBusy ? '#BDD3DC' : '#6F99CC',
                 color: '#FFFFFF',
                 border: 'none',
                 borderRadius: '5px',
                 padding: '10px 28px',
                 fontSize: '14px',
                 fontWeight: 600,
-                cursor: !file || !format || isBusy ? 'not-allowed' : 'pointer',
+                cursor: !canLoad || isBusy ? 'not-allowed' : 'pointer',
               }}
             >
               Begin Ingestion
