@@ -1,0 +1,108 @@
+{
+  "$comment": [
+    "IRS e-file XML -> filings columns. Language-neutral by design: the browser",
+    "reader (lib/ingest/efile-map.ts) and scripts/ingest.py both consume THIS file,",
+    "so a wrong path is fixed in one place rather than two.",
+    "",
+    "Paths are '/'-separated element names relative to the stated root, in the",
+    "http://www.irs.gov/efile namespace. Parts VIII-X of the 990 report through",
+    "'*Grp' containers holding BOYAmt/EOYAmt pairs or a functional-expense split,",
+    "which is why a column maps to a path and not a bare tag name.",
+    "",
+    "Verified against 2026_TEOS_XML_01A.zip (12,245 returns, 8 schema versions",
+    "2022v5.0-2025v4.0). Every Part I path resolves in 100% of 990s in every",
+    "version; no element is renamed across versions. Lower resolution rates on",
+    "detail paths are filer variation, not schema variation.",
+    "",
+    "Note the post-ASU-2016-14 vocabulary: NoDonorRestriction/DonorRestriction",
+    "net assets. The pre-2018 TempRstr/PrmnntRstr elements do not appear at all."
+  ],
+
+  "namespace": "http://www.irs.gov/efile",
+
+  "header": {
+    "ein": "ReturnHeader/Filer/EIN",
+    "name": "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt",
+    "state": "ReturnHeader/Filer/USAddress/StateAbbreviationCd",
+    "tax_period_end": "ReturnHeader/TaxPeriodEndDt",
+    "return_type": "ReturnHeader/ReturnTypeCd",
+    "submission_ts": "ReturnHeader/ReturnTs"
+  },
+
+  "forms": {
+    "990": {
+      "root": "ReturnData/IRS990",
+      "amended_flag": "AmendedReturnInd",
+      "columns": {
+        "total_revenue": "CYTotalRevenueAmt",
+        "total_expenses": "CYTotalExpensesAmt",
+        "total_assets": "TotalAssetsEOYAmt",
+        "total_liabilities": "TotalLiabilitiesEOYAmt",
+        "total_net_assets": "NetAssetsOrFundBalancesEOYAmt",
+        "contributions": "CYContributionsGrantsAmt",
+        "program_revenue": "CYProgramServiceRevenueAmt",
+        "investment_income": "CYInvestmentIncomeAmt",
+        "other_revenue": "CYOtherRevenueAmt",
+        "program_expenses": "TotalFunctionalExpensesGrp/ProgramServicesAmt",
+        "ga_expenses": "TotalFunctionalExpensesGrp/ManagementAndGeneralAmt",
+        "fundraising_expenses": "TotalFunctionalExpensesGrp/FundraisingAmt",
+        "cash_equiv": "CashNonInterestBearingGrp/EOYAmt",
+        "st_investments": "SavingsAndTempCashInvstGrp/EOYAmt",
+        "lt_investments": "InvestmentsPubTradedSecGrp/EOYAmt",
+        "ppe": "LandBldgEquipBasisNetGrp/EOYAmt",
+        "unrestr_net_assets": "NoDonorRestrictionNetAssetsGrp/EOYAmt",
+        "restr_net_assets": "DonorRestrictionNetAssetsGrp/EOYAmt",
+        "num_employees": "TotalEmployeeCnt"
+      }
+    },
+
+    "990EZ": {
+      "root": "ReturnData/IRS990EZ",
+      "amended_flag": "AmendedReturnInd",
+      "columns": {
+        "total_revenue": "TotalRevenueAmt",
+        "total_expenses": "TotalExpensesAmt",
+        "total_assets": "Form990TotalAssetsGrp/EOYAmt",
+        "total_liabilities": "SumOfTotalLiabilitiesGrp/EOYAmt",
+        "total_net_assets": "NetAssetsOrFundBalancesEOYAmt",
+        "contributions": "ContributionsGiftsGrantsEtcAmt",
+        "program_revenue": "ProgramServiceRevenueAmt",
+        "investment_income": "InvestmentIncomeAmt",
+        "program_expenses": "TotalProgramServiceExpensesAmt",
+        "cash_equiv": "CashSavingsAndInvestmentsGrp/EOYAmt"
+      },
+      "$note": "990-EZ has no functional-expense split, so ga_expenses and fundraising_expenses stay null. other_revenue is derived."
+    },
+
+    "990PF": {
+      "root": "ReturnData/IRS990PF",
+      "amended_flag": "AmendedReturnInd",
+      "columns": {
+        "total_revenue": "AnalysisOfRevenueAndExpenses/TotalRevAndExpnssAmt",
+        "total_expenses": "AnalysisOfRevenueAndExpenses/TotalExpensesRevAndExpnssAmt",
+        "total_assets": "Form990PFBalanceSheetsGrp/TotalAssetsEOYAmt",
+        "total_liabilities": "Form990PFBalanceSheetsGrp/TotalLiabilitiesEOYAmt",
+        "total_net_assets": "Form990PFBalanceSheetsGrp/TotNetAstOrFundBalancesEOYAmt",
+        "contributions": "AnalysisOfRevenueAndExpenses/ContriRcvdRevAndExpnssAmt",
+        "investment_income": "AnalysisOfRevenueAndExpenses/NetInvestmentIncomeAmt",
+        "ga_expenses": "AnalysisOfRevenueAndExpenses/TotOprExpensesRevAndExpnssAmt",
+        "cash_equiv": "Form990PFBalanceSheetsGrp/CashEOYAmt",
+        "legal_fees": "AnalysisOfRevenueAndExpenses/LegalFeesRevAndExpnssAmt",
+        "accounting_fees": "AnalysisOfRevenueAndExpenses/AccountingFeesRevAndExpnssAmt",
+        "occupancy": "AnalysisOfRevenueAndExpenses/OccupancyRevAndExpnssAmt",
+        "depreciation": "AnalysisOfRevenueAndExpenses/DeprecAndDpltnRevAndExpnssAmt",
+        "grants_to_govts": "AnalysisOfRevenueAndExpenses/ContriPaidRevAndExpnssAmt"
+      },
+      "$note": "A private foundation has no program-service revenue line, so program_revenue stays null. The four-column PF layout (RevAndExpnss / NetInvstIncm / AdjNetIncm / DsbrsChrtbl) is deliberately read from the RevAndExpnss column only, which is the books figure comparable to a 990's totals."
+    }
+  },
+
+  "derived": [
+    {
+      "column": "other_revenue",
+      "rule": "revenue_residual",
+      "applies_to": ["990EZ", "990PF"],
+      "$note": "total_revenue minus contributions, program_revenue and investment_income. The 990 reports CYOtherRevenueAmt directly and is excluded. Matches how scripts/ingest.py derives it for the SOI extracts."
+    }
+  ]
+}

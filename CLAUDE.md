@@ -75,6 +75,36 @@ parser for a dead format, the screen now declines it: all 17 .dat files are alre
 will ever be published. If .dat parsing is ever genuinely needed, pass `delimiter: ' '` for that
 format — `mapRow` already has a correct dat branch and already handles `tax_prd` vs `tax_pd`.
 
+### The e-file XML field map lives in one JSON file
+`apps/web/lib/ingest/efile-concordance.json` maps `filings` columns to XML paths for 990, 990-EZ
+and 990-PF. **Both readers consume it** — `lib/ingest/efile-map.ts` (browser) and, once Phase 7
+lands, `scripts/ingest.py` — so a wrong path is fixed in one place. Add a column there, not in code.
+
+Paths are `/`-separated element names in the `http://www.irs.gov/efile` namespace. Part I is flat
+scalars (`CYTotalRevenueAmt`); Parts VIII–X report through `*Grp` containers holding `BOYAmt`/
+`EOYAmt` pairs or a functional-expense split — hence paths, not bare tag names. Resolution follows
+**direct children only**: names like `OtherRevenueMiscGrp` recur at several depths, so a descendant
+search returns the wrong node.
+
+Verified against `2026_TEOS_XML_01A.zip` (12,245 returns, 8 schema versions): no element is renamed
+across versions, and 990 revenue components reconcile to `CYTotalRevenueAmt` in **7,180 of 7,180**
+returns. Balance sheets reconcile in 99.99% of 990s, 98.9% of PF, 97.9% of EZ.
+
+Two gotchas worth keeping:
+- **1,997 of 2,000 archive entries begin with a UTF-8 BOM.** A BOM ahead of `<?xml?>` makes strict
+  parsers reject the document; browsers tolerate it. Always `stripXmlBom` first.
+- **`tax_period` must be first-of-month**, matching the SOI path's YYYYMM conversion. Getting this
+  wrong does not error — it silently stops matching existing rows, so every e-file row looks new
+  and the conflict check reports nothing.
+
+The functional-expense split sums to the filer's own Part IX total in only 93.8% of 990s, while
+Part IX total matches Part I total in 99.96%. That 6% is source data quality, not a mapping fault —
+do not "fix" it.
+
+`mapEfileReturn` returns a discriminated result, never a bare null: `unsupported_form` (990-T),
+`missing_ein`, `bad_tax_period`, `malformed`, each with the return type, so the uploader can report
+a breakdown instead of a silent zero.
+
 ### Organization names come from the BMF, never from a filing load
 `organizations.name` is `NOT NULL`, and the SOI extracts carry **no name column at all** — only the
 EO BMF does. So `buildOrganizationsUpsert` returns `null` when no incoming row has a name, and the

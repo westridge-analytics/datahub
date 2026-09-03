@@ -1,0 +1,111 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Return xmlns="http://www.irs.gov/efile" returnVersion="2024v5.2">
+  <ReturnHeader binaryAttachmentCnt="0">
+    <ReturnTs>2026-01-02T09:21:32-05:00</ReturnTs>
+    <TaxPeriodEndDt>2025-03-31</TaxPeriodEndDt>
+    <PreparerFirmGrp>
+      <PreparerFirmEIN>884265459</PreparerFirmEIN>
+      <PreparerFirmName>
+        <BusinessNameLine1Txt>Rick Bornstein CPA</BusinessNameLine1Txt>
+      </PreparerFirmName>
+      <PreparerUSAddress>
+        <AddressLine1Txt>52 Edwin Place</AddressLine1Txt>
+        <CityNm>Asheville</CityNm>
+        <StateAbbreviationCd>NC</StateAbbreviationCd>
+        <ZIPCd>28801</ZIPCd>
+      </PreparerUSAddress>
+    </PreparerFirmGrp>
+    <ReturnTypeCd>990T</ReturnTypeCd>
+    <TaxPeriodBeginDt>2024-04-01</TaxPeriodBeginDt>
+    <Filer>
+      <EIN>046047246</EIN>
+      <BusinessName>
+        <BusinessNameLine1Txt>THE AMHERST WOMANS CLUB INC</BusinessNameLine1Txt>
+      </BusinessName>
+      <InCareOfNm>% MARCIA SARAGE</InCareOfNm>
+      <BusinessNameControlTxt>AMHE</BusinessNameControlTxt>
+      <PhoneNum>4132537027</PhoneNum>
+      <USAddress>
+        <AddressLine1Txt>35 TRIANGLE STREET</AddressLine1Txt>
+        <CityNm>AMHERST</CityNm>
+        <StateAbbreviationCd>MA</StateAbbreviationCd>
+        <ZIPCd>01002</ZIPCd>
+      </USAddress>
+    </Filer>
+    <BusinessOfficerGrp>
+      <PersonNm>MARCIA SARAGE</PersonNm>
+      <PersonTitleTxt>TREASURER AND DIRECTOR</PersonTitleTxt>
+      <PhoneNum>4132537027</PhoneNum>
+      <SignatureDt>2026-01-02</SignatureDt>
+      <DiscussWithPaidPreparerInd>true</DiscussWithPaidPreparerInd>
+    </BusinessOfficerGrp>
+    <IRSResponsiblePrtyInfoCurrInd>true</IRSResponsiblePrtyInfoCurrInd>
+    <PreparerPersonGrp>
+      <PreparerPersonNm>Rick Bornstein CPA</PreparerPersonNm>
+      <PTIN>P01348900</PTIN>
+      <PhoneNum>5056997843</PhoneNum>
+      <PreparationDt>2026-01-02</PreparationDt>
+    </PreparerPersonGrp>
+    <TaxYr>2024</TaxYr>
+    <BuildTS>2025-03-06 01:10:19Z</BuildTS>
+  </ReturnHeader>
+  <ReturnData documentCnt="3">
+    <IRS990T documentId="990T">
+      <Organization501IndicatorGrp>
+        <Organization501Ind>X</Organization501Ind>
+        <Organization501cTypeTxt>c3</Organization501cTypeTxt>
+      </Organization501IndicatorGrp>
+      <BookValueAssetsEOYAmt>567244</BookValueAssetsEOYAmt>
+      <Organization501cCorporationInd>X</Organization501cCorporationInd>
+      <Form990TScheduleAAttachedCnt>1</Form990TScheduleAAttachedCnt>
+      <SubsidiaryCorporationInd>false</SubsidiaryCorporationInd>
+      <BooksInCareOfDetail>
+        <PersonNm>SENAIDA BAUTISTA</PersonNm>
+        <USAddress>
+          <AddressLine1Txt>35 TRIANGLE STREET</AddressLine1Txt>
+          <CityNm>AMHERST</CityNm>
+          <StateAbbreviationCd>MA</StateAbbreviationCd>
+          <ZIPCd>01002</ZIPCd>
+        </USAddress>
+        <PhoneNum>4132537027</PhoneNum>
+      </BooksInCareOfDetail>
+      <TotalUBTIAmt>0</TotalUBTIAmt>
+      <TaxableCorporationAmt>0</TaxableCorporationAmt>
+      <ForeignAccountsQuestionInd>false</ForeignAccountsQuestionInd>
+      <ForeignTrustQuestionInd>false</ForeignTrustQuestionInd>
+    </IRS990T>
+    <IRS990TScheduleA documentId="990TA001">
+      <PrincipalBusinessActivityCd>532000</PrincipalBusinessActivityCd>
+      <SequenceReferenceNum>1</SequenceReferenceNum>
+      <SequenceTotalNum>1</SequenceTotalNum>
+      <TradeOrBusinessDesc>RENTAL OF CLUBHOUSE</TradeOrBusinessDesc>
+      <NetRentIncomeAmt>-2504</NetRentIncomeAmt>
+      <TotUnrltTrdBusIncmAmt>27019</TotUnrltTrdBusIncmAmt>
+      <TotUnrltTrdBusIncmExpnssAmt>29523</TotUnrltTrdBusIncmExpnssAmt>
+      <TotNetUnrltTrdBusIncmAmt>-2504</TotNetUnrltTrdBusIncmAmt>
+      <TotalDepreciationAmt referenceDocumentId="4562001">18246</TotalDepreciationAmt>
+      <DepreciationNetAmt>18246</DepreciationNetAmt>
+      <TotalDeductionsAmt>18246</TotalDeductionsAmt>
+      <UBIBeforeNOLDedAmt>-20750</UBIBeforeNOLDedAmt>
+      <UnrelatedBusinessTaxblIncmAmt>-20750</UnrelatedBusinessTaxblIncmAmt>
+      <RentIncomePropertyGrp>
+        <USAddress>
+          <AddressLine1Txt>35 TRIANGLE STREET</AddressLine1Txt>
+          <CityNm>AMHERST</CityNm>
+          <StateAbbreviationCd>MA</StateAbbreviationCd>
+          <ZIPCd>01002</ZIPCd>
+        </USAddress>
+        <RentRealPersonalPropertyAmt>27019</RentRealPersonalPropertyAmt>
+        <TotalRentsByPropertyAmt>27019</TotalRentsByPropertyAmt>
+        <DeductionsConnectedRentIncmAmt referenceDocumentId="DdCnRn01001">29523</DeductionsConnectedRentIncmAmt>
+      </RentIncomePropertyGrp>
+      <TotalRentIncomeAmt>27019</TotalRentIncomeAmt>
+      <TotalRentDeductionsAmt>29523</TotalRentDeductionsAmt>
+    </IRS990TScheduleA>
+    <IRS4562 documentId="4562001">
+      <BusinessOrActivityTxt>FORM 990T - 1</BusinessOrActivityTxt>
+      <OtherDepreciationAmt>18246</OtherDepreciationAmt>
+      <TotalDepreciationAmt>18246</TotalDepreciationAmt>
+    </IRS4562>
+  </ReturnData>
+</Return>
