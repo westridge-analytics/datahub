@@ -17,6 +17,13 @@ const PREFLIGHT_CHUNK = 2000
 // refusing connections.
 const MAX_INFLIGHT = 5
 
+// Rough bytes-per-row for the pre-check row estimate, calibrated against
+// 24eoextract990.csv (236 MB / 341,514 rows = 691). The old value of 200
+// overstated a 236 MB file by 3.6x and left the progress bar reading ~28% at
+// completion. Only used before the conflict check — after it we know the exact
+// count and use that instead.
+const BYTES_PER_ROW_ESTIMATE = 690
+
 // This screen loads the IRS SOI annual extracts, which are the authoritative
 // source. The e-file XML archive path (data_source 'efile_xml') arrives in a
 // later phase and will set this per file.
@@ -110,6 +117,8 @@ export default function IngestPage() {
   const [status, setStatus] = useState<Status>('idle')
   const [progress, setProgress] = useState<Progress>(ZERO_PROGRESS)
   const [preflight, setPreflight] = useState<Preflight | null>(null)
+  // Exact row count, known once the conflict check has read the whole file.
+  const [rowCount, setRowCount] = useState<number | null>(null)
   const [mode, setMode] = useState<ConflictMode>('skip')
   const [logs, setLogs] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -136,6 +145,7 @@ export default function IngestPage() {
     setStatus('idle')
     setProgress(ZERO_PROGRESS)
     setPreflight(null)
+    setRowCount(null)
     setMode('skip')
     setLogs([])
   }
@@ -264,6 +274,7 @@ export default function IngestPage() {
     cancelRef.current = false
     setStatus('checking')
     setPreflight(null)
+    setRowCount(null)
     setProgress(ZERO_PROGRESS)
     setLogs([])
     addLog('Checking what this file will land on...')
@@ -320,6 +331,8 @@ export default function IngestPage() {
         }
         if (chunk.length > 0) chunks.push(chunk)
         chunk = []
+        setRowCount(seen)
+        setProgress((p) => ({ ...p, total: seen }))
         addLog(`Read ${seen.toLocaleString()} rows — checking ${chunks.length} batches of keys...`)
         await pooled(chunks.map((c) => () => checkChunk(c)), MAX_INFLIGHT)
         setPreflight({ ...tally })
@@ -418,7 +431,7 @@ export default function IngestPage() {
           const batch = buffer.slice()
           buffer = []
           bufferMap.clear()
-          const estimatedTotal = Math.ceil((file.size / 200) / BATCH_SIZE)
+          const estimatedTotal = Math.ceil((rowCount ?? file.size / BYTES_PER_ROW_ESTIMATE) / BATCH_SIZE)
           batchNum++
           setStatus('uploading')
           dispatch(batch, batchNum, Math.max(estimatedTotal, batchNum))
@@ -469,7 +482,7 @@ export default function IngestPage() {
     addLog('Cancelling...')
   }
 
-  const estimatedRows = file ? Math.round(file.size / 200) : 0
+  const estimatedRows = file ? Math.round(file.size / BYTES_PER_ROW_ESTIMATE) : 0
   const progressPct =
     progress.total > 0
       ? Math.min(100, Math.round((progress.batched / progress.total) * 100))
@@ -482,14 +495,21 @@ export default function IngestPage() {
   const isBusy = isChecking || isRunning
 
   return (
-    <div
-      style={{
-        padding: '32px 40px',
-        maxWidth: '860px',
-        margin: '0 auto',
-        fontFamily: "'Avenir Next LT Pro', system-ui, sans-serif",
-      }}
-    >
+    // The app shell is fixed-viewport — globals.css sets `html, body {
+    // overflow: hidden }` and <main> is height:100vh with overflow:hidden — so
+    // every page owns its own scrolling. Without this scroll container the
+    // lower steps are simply unreachable on a short window. Same pattern as
+    // the cohorts and visualization pages. `minHeight: 0` is what lets a flex
+    // child shrink below its content height so the overflow can engage.
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div
+        style={{
+          padding: '32px 40px',
+          maxWidth: '860px',
+          margin: '0 auto',
+          fontFamily: "'Avenir Next LT Pro', system-ui, sans-serif",
+        }}
+      >
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
         <h1
@@ -709,7 +729,9 @@ export default function IngestPage() {
                 </dd>
                 <dt style={{ color: '#3D5A63', fontWeight: 500 }}>Estimated rows</dt>
                 <dd style={{ margin: 0, color: '#10232B' }}>
-                  ~{estimatedRows.toLocaleString()} (rough estimate)
+                  {rowCount !== null
+                    ? `${rowCount.toLocaleString()} (exact, counted during the conflict check)`
+                    : `~${estimatedRows.toLocaleString()} (rough estimate)`}
                 </dd>
               </dl>
 
@@ -1066,6 +1088,7 @@ export default function IngestPage() {
           </div>
         </section>
       )}
+      </div>
     </div>
   )
 }
