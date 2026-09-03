@@ -90,21 +90,27 @@ export async function POST(request: NextRequest) {
     const skippedUnknown = rows.length - loadable.length
 
     const counts = { inserted: 0, overwritten: 0, superseded: 0, skipped: 0 }
+    let deduped = 0
     if (loadable.length > 0) {
       const upsert = buildFilingsUpsert(loadable, dataSource, mode, body.source_file)
       const audited = await rawQuery<{ action: string }>(upsert.sql, upsert.params)
+      // rowCount is post-dedupe: one archive can carry two returns for the same
+      // period, and Postgres will not let one statement touch a row twice.
+      const written = upsert.rowCount ?? loadable.length
+      deduped = loadable.length - written
       for (const a of audited) {
         if (a.action === 'overwritten') counts.overwritten++
         else if (a.action === 'superseded') counts.superseded++
         else counts.skipped++
       }
-      counts.inserted = loadable.length - audited.length
+      counts.inserted = written - audited.length
     }
 
     return Response.json({
       processed: rows.length,
       ...counts,
       skipped_unknown_ein: skippedUnknown,
+      deduped,
       // A sample, so the operator can look one up without the response bloating.
       unknown_eins: [...unknown].slice(0, 5),
     })

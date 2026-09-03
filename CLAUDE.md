@@ -192,6 +192,14 @@ The write path is generated from one list in `lib/ingest/upsert-sql.ts` — add 
 in four places in a SQL string. All of it is pure (no DB handle, no `@/` alias) so tests can run
 the real production SQL against a scratch schema.
 
+**One batch may not contain the same `(ein, tax_period)` twice.** Postgres refuses —
+"ON CONFLICT DO UPDATE command cannot affect row a second time" — and a single archive really does
+carry two returns for one key when an organisation amended within the month. `dedupeBatch` (TS) and
+`dedupe_batch` (Python) collapse them, later `submission_date` winning, which is the same rule the
+SQL applies. Duplicates that straddle batches need no special handling: the second batch takes the
+normal conflict path and is recorded as a supersession. This aborted the first real backfill attempt
+on archive one, having never fired on any fixture.
+
 **A column mapped but not listed in `UPSERT_COLUMNS` is silently dropped**, not rejected. Six were
 (`num_employees`, `legal_fees`, `accounting_fees`, `occupancy`, `depreciation`, `grants_to_govts`) —
 extracted from the XML, discarded on the way to the database, with every unit test on both sides

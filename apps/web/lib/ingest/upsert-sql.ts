@@ -83,6 +83,33 @@ export interface BuildOptions {
 export interface BuiltQuery {
   sql: string
   params: unknown[]
+  /** Rows actually in the statement, after duplicate keys were collapsed. */
+  rowCount?: number
+}
+
+/**
+ * Collapse duplicate (ein, tax_period) keys within one batch, later submission
+ * winning.
+ *
+ * Postgres refuses to let a single ON CONFLICT DO UPDATE touch the same row
+ * twice ("cannot affect row a second time"), and one archive really does carry
+ * two returns for the same key when an organisation amended within the month.
+ * Duplicates that straddle batches are fine — the second batch takes the normal
+ * conflict path — so this only has to hold within one statement.
+ *
+ * The winner is chosen by the rule the SQL itself applies: later
+ * submission_date wins, a missing date sorting earliest.
+ */
+export function dedupeBatch<T extends Record<string, unknown>>(rows: T[]): T[] {
+  const best = new Map<string, T>()
+  for (const r of rows) {
+    const key = `${String(r.ein)}|${String(r.tax_period)}`
+    const cur = best.get(key)
+    const a = String(r.submission_date ?? '')
+    const b = String(cur?.submission_date ?? '')
+    if (cur === undefined || a >= b) best.set(key, r)
+  }
+  return [...best.values()]
 }
 
 function table(name: string, opts?: BuildOptions): string {
@@ -164,12 +191,13 @@ export function buildMissingEinsQuery(
  * the Neon HTTP driver does not provide.
  */
 export function buildFilingsUpsert(
-  rows: Record<string, unknown>[],
+  inputRows: Record<string, unknown>[],
   dataSource: DataSource,
   mode: ConflictMode,
   sourceFile: string,
   opts?: BuildOptions,
 ): BuiltQuery {
+  const rows = dedupeBatch(inputRows)
   const params: unknown[] = [mode]
   const MODE = '$1'
 
@@ -251,7 +279,7 @@ export function buildFilingsUpsert(
     RETURNING action
   `
 
-  return { sql, params }
+  return { sql, params, rowCount: rows.length }
 }
 
 /** Which of the supplied keys already exist, and where each row came from. */

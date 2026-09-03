@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { neon } from '@neondatabase/serverless'
 import {
   UPSERT_COLUMNS,
+  dedupeBatch,
   buildFilingsUpsert,
   buildMissingEinsQuery,
   buildOrganizationsUpsert,
@@ -71,7 +72,11 @@ async function load(
   await seedOrgs(rows)
   const built = buildFilingsUpsert(rows, dataSource, mode, sourceFile, OPTS)
   const audited = await q<{ action: string }>(built.sql, built.params)
-  const counts = { inserted: rows.length - audited.length, overwritten: 0, superseded: 0, skipped: 0 }
+  // Count against the post-dedupe total, as the route does — duplicate keys in
+  // one batch are collapsed before the statement is built.
+  const written = built.rowCount ?? rows.length
+  const counts = { inserted: written - audited.length, overwritten: 0, superseded: 0,
+                   skipped: 0, deduped: rows.length - written }
   for (const a of audited) {
     if (a.action === 'overwritten') counts.overwritten++
     else if (a.action === 'superseded') counts.superseded++
@@ -366,5 +371,56 @@ describe('Ingestion source precedence', { skip: url ? false : 'DATABASE_URL not 
       'soi_extract', 'skip')
     assert.equal(c.inserted, 1)
     assert.equal(Number((await stored('37-7777777', '2024-12-01')).total_revenue), 42)
+  })
+  // ── duplicate keys within one batch ────────────────────────────────────────
+  // Postgres: "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  // A single archive really does carry two returns for one (ein, tax_period)
+  // when an organisation amended within the month — this aborted the first real
+  // backfill attempt on archive one.
+
+  test('two returns for the same period in one batch collapse, later wins', async () => {
+    await reset()
+    const c = await load([
+      row({ ein: '61-1111111', tax_period: '2024-12-01', total_revenue: 100,
+            object_id: 'OLD', submission_date: '2025-02-01' }),
+      row({ ein: '61-1111111', tax_period: '2024-12-01', total_revenue: 200,
+            object_id: 'NEW', submission_date: '2025-08-01' }),
+    ], 'efile_xml', 'skip')
+
+    assert.equal(c.inserted, 1, 'the batch must not attempt the same row twice')
+    const s = await stored('61-1111111', '2024-12-01')
+    assert.equal(Number(s.total_revenue), 200, 'the later submission must win')
+    assert.equal(s.object_id, 'NEW')
+  })
+
+  test('duplicate collapse is order-independent', async () => {
+    await reset()
+    await load([
+      row({ ein: '62-2222222', tax_period: '2024-12-01', total_revenue: 200,
+            object_id: 'NEW', submission_date: '2025-08-01' }),
+      row({ ein: '62-2222222', tax_period: '2024-12-01', total_revenue: 100,
+            object_id: 'OLD', submission_date: '2025-02-01' }),
+    ], 'efile_xml', 'skip')
+    const s = await stored('62-2222222', '2024-12-01')
+    assert.equal(s.object_id, 'NEW', 'the newer submission wins whichever arrives first')
+  })
+
+  test('a duplicate straddling two batches still takes the normal conflict path', async () => {
+    await reset()
+    await load([row({ ein: '63-3333333', tax_period: '2024-12-01', total_revenue: 100,
+                     object_id: 'OLD', submission_date: '2025-02-01' })], 'efile_xml', 'skip')
+    const c = await load([row({ ein: '63-3333333', tax_period: '2024-12-01', total_revenue: 200,
+                     object_id: 'NEW', submission_date: '2025-08-01' })], 'efile_xml', 'skip')
+    assert.equal(c.superseded, 1, 'cross-batch duplicates are supersessions, not dedupe')
+    assert.equal(Number((await stored('63-3333333', '2024-12-01')).total_revenue), 200)
+  })
+
+  test('dedupeBatch leaves distinct keys alone', () => {
+    const rows = [
+      { ein: '64-4444444', tax_period: '2024-12-01' },
+      { ein: '64-4444444', tax_period: '2023-12-01' },
+      { ein: '65-5555555', tax_period: '2024-12-01' },
+    ]
+    assert.equal(dedupeBatch(rows).length, 3)
   })
 })

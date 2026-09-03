@@ -339,9 +339,32 @@ def build_upsert(n_rows: int, mode_param: str, schema: str | None) -> str:
     """
 
 
+def dedupe_batch(rows: list[dict]) -> tuple[list[dict], int]:
+    """Collapse duplicate (ein, tax_period) keys, later submission wins.
+
+    Postgres refuses to let one ON CONFLICT DO UPDATE touch the same row twice
+    ("cannot affect row a second time"), and a single archive really does
+    contain two returns for the same key when an organisation amended within
+    the month. Cross-batch duplicates are fine — the second batch takes the
+    normal conflict path — so this only has to hold within one statement.
+
+    The winner is chosen by the same rule the SQL applies: later
+    submission_date wins, a missing date sorting earliest.
+    """
+    best: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        k = (r["ein"], r["tax_period"])
+        cur = best.get(k)
+        if cur is None or (r.get("submission_date") or "") >= (cur.get("submission_date") or ""):
+            best[k] = r
+    return list(best.values()), len(rows) - len(best)
+
+
 def upsert_batch(conn, rows: list[dict], mode: str, schema: str | None) -> Counter:
     """Organizations first (the FK), then filings with precedence."""
     counts = Counter()
+    rows, collapsed = dedupe_batch(rows)
+    counts["deduped"] = collapsed
     named = {}
     for r in rows:
         if r.get("_name") and r["ein"] not in named:
@@ -427,7 +450,9 @@ def ingest_archive(conn, zf: zipfile.ZipFile, name: str, args) -> None:
               f"overwritten {totals['overwritten']:,} · "
               f"superseded {totals['superseded']:,} · "
               f"skipped {totals['skipped']:,} · "
-              f"orgs touched {totals['orgs_touched']:,}", flush=True)
+              f"orgs touched {totals['orgs_touched']:,}"
+              + (f" · {totals['deduped']:,} same-period duplicates collapsed"
+                 if totals['deduped'] else ""), flush=True)
 
 
 def main() -> None:
