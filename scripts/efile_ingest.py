@@ -235,23 +235,40 @@ def open_archive(path: str | None, url: str | None) -> tuple[zipfile.ZipFile, st
         return zipfile.ZipFile(path), os.path.basename(path)
     assert url
     name = url.rsplit("/", 1)[-1]
-    print(f"[{name}] downloading ...", flush=True)
-    buf = io.BytesIO()
-    req = urllib.request.Request(url, headers={"User-Agent": "westridge-datahub/1.0"})
-    with urllib.request.urlopen(req) as resp:  # noqa: S310 — fixed IRS host
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
-        while True:
-            chunk = resp.read(DOWNLOAD_CHUNK)
-            if not chunk:
-                break
-            buf.write(chunk)
-            got += len(chunk)
-            if total:
-                print(f"\r[{name}] {got/1048576:.0f}/{total/1048576:.0f} MB", end="", flush=True)
-        print(flush=True)
-    buf.seek(0)
-    return zipfile.ZipFile(buf), name
+    # Retried: four archives were lost to "Connection reset by peer" partway
+    # through a several-hundred-megabyte download.
+    attempts = 4
+    for attempt in range(attempts):
+        try:
+            print(f"[{name}] downloading{'' if attempt == 0 else f' (attempt {attempt + 1})'} ...",
+                  flush=True)
+            buf = io.BytesIO()
+            req = urllib.request.Request(url, headers={"User-Agent": "westridge-datahub/1.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 — fixed IRS host
+                total = int(resp.headers.get("Content-Length") or 0)
+                got = 0
+                while True:
+                    chunk = resp.read(DOWNLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    buf.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        print(f"\r[{name}] {got/1048576:.0f}/{total/1048576:.0f} MB",
+                              end="", flush=True)
+                print(flush=True)
+            if total and buf.tell() != total:
+                raise OSError(f"short read: {buf.tell()} of {total} bytes")
+            buf.seek(0)
+            return zipfile.ZipFile(buf), name
+        except (OSError, ConnectionResetError) as exc:
+            if attempt == attempts - 1:
+                raise
+            delay = 5 * (attempt + 1)
+            print(f"\n[{name}] download failed ({type(exc).__name__}: {exc}); "
+                  f"retrying in {delay}s", flush=True)
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 DEFLATE64 = 9
@@ -315,6 +332,57 @@ def iter_returns(zf: zipfile.ZipFile, source_file: str, limit: int | None,
 # ---------------------------------------------------------------------------
 # Writing, with the shared precedence rule
 # ---------------------------------------------------------------------------
+
+class Db:
+    """A Postgres connection that survives being dropped mid-run.
+
+    A backfill is hours long and Neon will close a connection under it. The
+    first attempt opened one connection at startup and never reconnected, so a
+    single drop on archive six cascaded into "connection already closed" for
+    every archive after it — thirteen archives lost to one dropped socket.
+
+    TCP keepalives reduce idle drops; `run` handles the rest by reconnecting
+    and retrying. Each unit of work is one statement plus its commit, so a
+    retry either re-applies an upsert (idempotent) or replays one that never
+    committed.
+    """
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.conn = self._open()
+
+    def _open(self):
+        return psycopg2.connect(
+            self.url, connect_timeout=30,
+            keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5,
+        )
+
+    def reconnect(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:                                     # noqa: BLE001
+            pass
+        self.conn = self._open()
+
+    def run(self, work, attempts: int = 4):
+        last: Exception | None = None
+        for i in range(attempts):
+            try:
+                return work(self.conn)
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                last = exc
+                if i == attempts - 1:
+                    break
+                delay = 2 ** i
+                print(f"  [db] {type(exc).__name__}: reconnecting in {delay}s "
+                      f"(attempt {i + 2}/{attempts})", flush=True)
+                time.sleep(delay)
+                try:
+                    self.reconnect()
+                except Exception as reconnect_exc:            # noqa: BLE001
+                    print(f"  [db] reconnect failed: {reconnect_exc}", flush=True)
+        raise last                                            # type: ignore[misc]
+
 
 def qualify(table: str, schema: str | None) -> str:
     return f'"{schema}".{table}' if schema else table
@@ -408,7 +476,7 @@ def dedupe_batch(rows: list[dict]) -> tuple[list[dict], int]:
     return list(best.values()), len(rows) - len(best)
 
 
-def upsert_batch(conn, rows: list[dict], mode: str, schema: str | None) -> Counter:
+def upsert_batch(db: 'Db', rows: list[dict], mode: str, schema: str | None) -> Counter:
     """Organizations first (the FK), then filings with precedence."""
     counts = Counter()
     rows, collapsed = dedupe_batch(rows)
@@ -418,7 +486,8 @@ def upsert_batch(conn, rows: list[dict], mode: str, schema: str | None) -> Count
         if r.get("_name") and r["ein"] not in named:
             named[r["ein"]] = (r["_name"], r.get("_state"))
 
-    with conn.cursor() as cur:
+    def work(conn):
+      with conn.cursor() as cur:
         if named:
             # The e-file XML carries names and states, unlike the SOI extracts,
             # so this path can create organizations the BMF has not caught up
@@ -441,9 +510,12 @@ def upsert_batch(conn, rows: list[dict], mode: str, schema: str | None) -> Count
             for c_i, col in enumerate(COLUMNS):
                 params[f"v{r_i}_{c_i}"] = r.get(col)
         cur.execute(build_upsert(len(rows), "%(mode)s", schema), params)
-        for (action,) in cur.fetchall():
-            counts[action] += 1
-    conn.commit()
+        actions = cur.fetchall()
+      conn.commit()
+      return actions
+
+    for (action,) in db.run(work):
+        counts[action] += 1
     counts["inserted"] = len(rows) - (
         counts["skipped"] + counts["overwritten"] + counts["superseded"]
     )
@@ -539,7 +611,7 @@ def main() -> None:
         if not database_url:
             print("ERROR: DATABASE_URL not set", file=sys.stderr)
             sys.exit(1)
-        conn = psycopg2.connect(database_url)
+        conn = Db(database_url)
 
     failed: list[tuple[str, str]] = []
 
@@ -565,7 +637,10 @@ def main() -> None:
             run(None, url)
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.conn.close()
+            except Exception:                                 # noqa: BLE001
+                pass
     if failed:
         print(f"\n{len(failed)} archive(s) not loaded:")
         for name, why in failed:

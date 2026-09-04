@@ -110,6 +110,17 @@ do not "fix" it.
 `missing_ein`, `bad_tax_period`, `malformed`, each with the return type, so the uploader can report
 a breakdown instead of a silent zero.
 
+### A backfill runs for hours; the connection will drop
+`scripts/efile_ingest.py` wraps its connection in `Db`, which reconnects and retries on
+`OperationalError` / `InterfaceError`, with TCP keepalives to reduce idle drops. Downloads retry
+with backoff and verify the byte count against `Content-Length`.
+
+This is not defensive theatre. The second backfill attempt held one connection opened at startup:
+Neon closed it during archive six, and every archive after that failed with "connection already
+closed" — thirteen archives lost to one dropped socket, plus four more to `Connection reset by
+peer` mid-download. Each unit of work is one statement plus its commit, so a retry either
+re-applies an upsert (idempotent) or replays one that never committed.
+
 ### Five archives use Deflate64, and most tools cannot read them
 `2025_05A`, `2025_05B`, `2025_11B`, `2026_05A`, `2026_05B` are compressed with **Deflate64**
 (method 9) rather than deflate. They are also among the largest — 2026_05A alone holds 168,344
