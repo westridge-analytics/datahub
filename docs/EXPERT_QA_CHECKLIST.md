@@ -7,7 +7,7 @@ the numbers *mean* what we assumed, and whether the policy choices match how thi
 
 Status of each item: `[ ]` open · `[x]` confirmed · `[!]` needs change
 
-Last updated 2026-09-03, after Phase 7 (bulk CLI). All build phases complete. Items are added as phases land.
+Last updated 2026-09-04, after the backfill. All build phases complete; 1,082,714 e-file rows loaded. Items are added as phases land.
 
 ---
 
@@ -155,13 +155,32 @@ loading the 24 archives: TY2024 complete, TY2025 as complete as the IRS has publ
 
 ## D. Things to watch on the first real load
 
-### D1 `[ ]` Reconcile e-file against SOI on the *same* filing
-The strongest available check, and not yet done. Loading a 2025 archive gives roughly 85,000 rows
-where e-file and SOI cover the same organization and period from the same original filing — so the
-figures should agree. Any systematic disagreement is a mapping fault.
+### D1 `[x]` Reconcile e-file against SOI on the *same* filing — DONE, and it passes
+Run during the backfill against `2025_TEOS_XML_01A.zip`, using the audit trail to find the 1,551
+keys where an e-file row lost to a stored SOI row, then re-mapping those returns and comparing
+field by field.
 
-This could not be done from a January 2026 archive: all 59 overlapping rows there were amendments
-(100%, against a 3.6% baseline), where the two sources legitimately hold different versions.
+| | agree | differ | match |
+|---|---|---|---|
+| all returns | 6,112 | 1,487 | 80.4% |
+| **non-amended only** | **4,825** | **174** | **96.5%** |
+
+88.3% of all disagreements are on returns flagged amended, where the two sources legitimately hold
+different versions of the same filing — SOI has the original, the archive has the restatement.
+
+Of the 174 non-amended differences, **156 (90%) are exactly 1**, concentrated in
+`total_liabilities` (114 of 174). Only **16 differ by more than 1,000** — 0.2% of the 7,599 field
+comparisons — and four of those are one organisation (EIN 30-0130780).
+
+**Conclusion: the field mapping is sound.** 99.8% of comparisons are exact or within 1.
+
+**Two questions this raises for you:**
+- **The ±1 pattern.** SOI records `1` where the e-file XML records `0`, overwhelmingly on
+  `total_liabilities`. Is 1 a sentinel or rounding convention in the SOI extracts? If so, is a
+  stored `1` meaningfully different from `0` for analysis?
+- **The 16 larger differences.** Not amended, not ±1. Worth a look at EIN 30-0130780 tax period
+  2024-05 in particular, where revenue differs by 114,000 (SOI 109,979 vs e-file 223,801). Is that
+  an SOI correction, an unflagged amendment, or something we are reading wrong?
 
 ### D2 `[ ]` Archive load throughput and responsiveness
 Measured on the smallest archive (12,245 returns): **10.9 seconds** end to end, with a pure-JS
