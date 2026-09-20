@@ -74,6 +74,36 @@ describe('write-path parity between the API and the bulk CLI', () => {
     })
   }
 
+  test('the targeted column fill touches only what it should', () => {
+    // --fill-columns backfills columns added to the concordance after a load.
+    // It writes directly to production rows, so the guards matter more than the
+    // convenience: it must not touch other columns, other sources, or keys.
+    const sql = execFileSync('python3', ['-c', `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('ei', 'scripts/efile_ingest.py')
+ei = importlib.util.module_from_spec(spec); spec.loader.exec_module(ei)
+sys.stdout.write(ei.build_column_update(2, ['occupancy','insurance'], None))`],
+      { cwd: ROOT, encoding: 'utf8' })
+
+    assert.match(sql, /^\s*UPDATE/, 'must be an UPDATE, never an INSERT')
+    assert.doesNotMatch(sql, /INSERT/i, 'no inserts and no audit write')
+    assert.match(sql, /occupancy = COALESCE\(v\.occupancy, f\.occupancy\)/,
+      'a value absent from the archive must not blank a stored one')
+    assert.match(sql, /insurance = COALESCE\(v\.insurance, f\.insurance\)/)
+    assert.match(sql, /f\.data_source = 'efile_xml'/,
+      'SOI rows are authoritative and must be out of scope')
+    assert.match(sql, /v\.submission_date >= f\.submission_date/,
+      'an earlier submission must not overwrite what a later one wrote')
+
+    // Nothing outside the requested list may be assigned.
+    const assigned = [...sql.matchAll(/^\s*(\w+) = COALESCE/gm)].map((m) => m[1])
+    assert.deepEqual(assigned.sort(), ['insurance', 'occupancy'],
+      'only the named columns may be written')
+    for (const key of ['ein', 'tax_period']) {
+      assert.ok(!assigned.includes(key), `${key} is a key column and must never be assigned`)
+    }
+  })
+
   test('the precedence rule is present, not accidentally normalised away', () => {
     const ts = normalise(tsUpsert({
       rows: [{ ein: '11-1111111', tax_period: '2024-12-01' }],

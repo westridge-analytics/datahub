@@ -201,6 +201,31 @@ Re-loading an identical archive is idempotent in `filings` but records one `supe
 per return, because the precedence rule uses `>=` on submission date so a genuine same-day
 resubmission still wins. Harmless, but `ingest_audit` grows on repeated re-runs of the same file.
 
+### Backfilling a column added after a load: `--fill-columns`
+```bash
+python scripts/efile_ingest.py --year 2025 --year 2026 --fill-columns part9
+python scripts/efile_ingest.py --url <archive> --fill-columns occupancy,insurance
+```
+UPDATEs only the named columns on rows already stored. No inserts, no organizations upsert, no
+audit rows, and it cannot touch a key column or a `soi_extract` row. `COALESCE(v.c, f.c)` means a
+value absent from the archive never blanks a stored one, and the `submission_date` guard means an
+earlier submission never overwrites what a later one wrote — so it is safe to re-run. `part9` is a
+shorthand for the eighteen Part IX expense columns. An unknown column name is a hard error, because
+a typo would otherwise update nothing and report success.
+
+**It is only modestly cheaper than a full reload, and not for the reason you would guess.** Measured
+on 2026_01A: 55s for 11,924 returns against 70s to reload them. Parsing is 3.9s of that; the rest is
+the row updates. `filings` carries **twelve indexes** at default fillfactor, so only **1.1% of
+updates are HOT** — 98.9% rewrite every index entry, at roughly 5–8ms per row. Batching does not
+help (cost is per row, not per statement: 1,000-row batches and one 10,000-row batch cost the same
+per row), and staging via `COPY` into a temp table plus a single set-based UPDATE was *slower*
+(98s). The plan is already a nested loop on the unique index; there is nothing left to tune.
+
+The one real saving is skipping rows where every target column is null — a no-op update still
+rewrites the tuple and all twelve indexes. That removed 16% of the work on the test archive.
+
+Use this mode for **safety and scope**, not speed: it cannot disturb a column you did not name.
+
 ### Reading an e-file archive
 `lib/ingest/efile-reader.ts` streams a monthly `.zip` — the largest is 521 MB compressed and ~2.7 GB
 expanded across 168,344 returns, so nothing may be held whole.

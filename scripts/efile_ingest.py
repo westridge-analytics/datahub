@@ -60,6 +60,18 @@ CONTRACT_DIR = ROOT / "apps/web/lib/ingest"
 ARCHIVE_BASE = "https://apps.irs.gov/pub/epostcard/990/xml"
 
 BATCH_SIZE = 1000
+
+# The Part IX expense lines, for `--fill-columns part9`. These are mapped by the
+# concordance but were added after the first backfill, so the rows already
+# stored have them NULL.
+PART_IX_COLUMNS = (
+    "comp_officers", "comp_disqualified", "comp_other_salaries",
+    "pension_contributions", "employee_benefits", "payroll_taxes",
+    "management_fees", "legal_fees", "accounting_fees",
+    "professional_fundraising_fees", "occupancy", "travel", "it_expenses",
+    "depreciation", "insurance", "grants_to_govts", "grants_to_individuals",
+    "grants_to_foreign",
+)
 DOWNLOAD_CHUNK = 1 << 20
 
 
@@ -455,6 +467,86 @@ def build_upsert(n_rows: int, mode_param: str, schema: str | None) -> str:
     """
 
 
+def build_column_update(n_rows: int, columns: list[str], schema: str | None) -> str:
+    """UPDATE only the named columns on rows that already exist.
+
+    For backfilling columns added to the concordance after a load. Far cheaper
+    than re-running the ingest: no inserts, no organizations upsert, no audit
+    rows, and a handful of columns per statement instead of the whole contract.
+    On the archive used to measure, the write is most of the cost — parsing 11,924
+    returns took 4s of a 70s archive.
+
+    Two guards make it safe to re-run:
+      * COALESCE(v.c, f.c) — a value absent from the archive never blanks a
+        stored one.
+      * the submission_date comparison — an earlier submission never overwrites
+        what a later one already wrote, the same rule the upsert applies.
+    """
+    filings = qualify("filings", schema)
+    cells = ["ein", "tax_period", "submission_date", *columns]
+    pg = {"int": "integer"}
+    types = {c["name"]: pg.get(c["type"], c["type"]) for c in CONTRACT["columns"]}
+
+    tuples = []
+    for r in range(n_rows):
+        row = []
+        for i, c in enumerate(cells):
+            ph = f"%(u{r}_{i})s"
+            row.append(f"{ph}::{types[c]}" if r == 0 else ph)
+        tuples.append("(" + ",".join(row) + ")")
+
+    sets = ",\n        ".join(f"{c} = COALESCE(v.{c}, f.{c})" for c in columns)
+    return f"""
+    UPDATE {filings} f SET
+        {sets}
+    FROM (VALUES {", ".join(tuples)}) AS v ({", ".join(cells)})
+    WHERE f.ein = v.ein
+      AND f.tax_period = v.tax_period
+      AND f.data_source = 'efile_xml'
+      AND (f.submission_date IS NULL
+           OR v.submission_date IS NULL
+           OR v.submission_date >= f.submission_date)
+    """
+
+
+def fill_columns_batch(db: 'Db', rows: list[dict], columns: list[str],
+                       schema: str | None) -> Counter:
+    counts = Counter()
+    rows, collapsed = dedupe_batch(rows)
+    counts["deduped"] = collapsed
+
+    # Drop rows with nothing to contribute. COALESCE(NULL, f.c) is f.c, so these
+    # are no-op updates — but Postgres still rewrites the tuple and all twelve
+    # index entries, because only 1.1% of updates on this table qualify as HOT
+    # (default fillfactor leaves no room on the page). A skipped no-op is the
+    # only cheap row here.
+    before = len(rows)
+    rows = [r for r in rows if any(r.get(c) is not None for c in columns)]
+    counts["nothing_to_add"] = before - len(rows)
+    if not rows:
+        return counts
+
+    cells = ["ein", "tax_period", "submission_date", *columns]
+
+    def work(conn):
+        with conn.cursor() as cur:
+            params: dict[str, Any] = {}
+            for r_i, r in enumerate(rows):
+                for c_i, col in enumerate(cells):
+                    params[f"u{r_i}_{c_i}"] = r.get(col)
+            cur.execute(build_column_update(len(rows), columns, schema), params)
+            affected = cur.rowcount
+        conn.commit()
+        return affected
+
+    updated = db.run(work)
+    counts["updated"] = updated
+    # A row in the archive with no matching stored row: a 990-T, an unknown EIN
+    # skipped at load time, or a period this load never reached.
+    counts["not_stored"] = len(rows) - updated
+    return counts
+
+
 def dedupe_batch(rows: list[dict]) -> tuple[list[dict], int]:
     """Collapse duplicate (ein, tax_period) keys, later submission wins.
 
@@ -548,7 +640,10 @@ def ingest_archive(conn, zf: zipfile.ZipFile, name: str, args) -> None:
         if not batch:
             return
         if not args.dry_run:
-            totals.update(upsert_batch(conn, batch, args.on_conflict, args.schema))
+            if args.fill_columns:
+                totals.update(fill_columns_batch(conn, batch, args.fill_columns, args.schema))
+            else:
+                totals.update(upsert_batch(conn, batch, args.on_conflict, args.schema))
         batch = []
 
     for row in iter_returns(zf, name, args.limit, skips):
@@ -565,6 +660,12 @@ def ingest_archive(conn, zf: zipfile.ZipFile, name: str, args) -> None:
         print(f"[{name}] skipped: " + ", ".join(parts), flush=True)
     if args.dry_run:
         print(f"[{name}] DRY RUN — nothing written", flush=True)
+    elif args.fill_columns:
+        print(f"[{name}] updated {totals['updated']:,} rows · "
+              f"{totals['nothing_to_add']:,} with nothing to add · "
+              f"{totals['not_stored']:,} not stored"
+              + (f" · {totals['deduped']:,} same-period duplicates collapsed"
+                 if totals['deduped'] else ""), flush=True)
     else:
         print(f"[{name}] inserted {totals['inserted']:,} · "
               f"overwritten {totals['overwritten']:,} · "
@@ -592,12 +693,35 @@ def main() -> None:
                          "are always resolved by submission date regardless")
     ap.add_argument("--dry-run", action="store_true", help="map and report, write nothing")
     ap.add_argument("--limit", type=int, default=None, help="stop after N returns per archive")
+    ap.add_argument("--fill-columns", metavar="COLS", default=None,
+                    help="UPDATE only these columns (comma-separated) on rows already stored, "
+                         "instead of loading. For backfilling columns added to the concordance "
+                         "after a load. Use 'part9' for the eighteen Part IX expense lines.")
     ap.add_argument("--schema", default=None,
                     help="write to this schema instead of public (for testing)")
     args = ap.parse_args()
 
     if not (args.zip or args.url or args.year):
         ap.error("give at least one of --zip, --url or --year")
+
+    if args.fill_columns:
+        if args.fill_columns == "part9":
+            args.fill_columns = list(PART_IX_COLUMNS)
+        else:
+            args.fill_columns = [c.strip() for c in args.fill_columns.split(",") if c.strip()]
+        known = {c["name"] for c in CONTRACT["columns"]}
+        unknown = [c for c in args.fill_columns if c not in known]
+        if unknown:
+            # Fail loudly: a typo would otherwise update nothing and report success.
+            ap.error(f"unknown column(s): {', '.join(unknown)}. "
+                     f"Names must appear in write-contract.json.")
+        keys = {c["name"] for c in CONTRACT["columns"] if c.get("key")}
+        if set(args.fill_columns) & keys:
+            ap.error("refusing to update a key column (ein, tax_period)")
+        print(f"FILL MODE: updating {len(args.fill_columns)} column(s) on stored e-file rows only; "
+              f"no inserts, no organizations, no audit rows", flush=True)
+    else:
+        args.fill_columns = None
 
     urls = list(args.url)
     for year in args.year:
