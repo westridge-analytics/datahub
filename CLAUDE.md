@@ -120,6 +120,25 @@ Two gotchas worth keeping:
   wrong does not error — it silently stops matching existing rows, so every e-file row looks new
   and the conflict check reports nothing.
 
+**Part IX line items and the functional split are both mapped, and are not alternatives.** The
+eighteen line-item columns (`comp_officers`, `occupancy`, `travel`, `insurance`, `grants_to_*`, …)
+read Part IX **column A** (`TotalAmt`) — the whole-organisation figure, the same basis as
+`total_expenses`. Reading a functional column instead would silently understate every category.
+
+This was QA's one finding. The two sources had populated *disjoint* expense columns: e-file had
+program/G&A/fundraising at 94.7% and every line item at 0%; the 3.75M historical SOI rows had the
+exact reverse. Mapping the line items makes e-file consistent with the history rather than replacing
+anything.
+
+990-PF and 990-EZ map only the lines that are 1:1 with a column. PF combines pension plans with
+employee benefits, and travel with conferences and meetings; the EZ merges salaries, other
+compensation and benefits into one line. Those are left unmapped rather than loaded into a column
+that means something narrower.
+
+About seven Part IX lines still have no column at all — office expenses, advertising, interest,
+conferences/meetings, payments to affiliates, benefits to members, and the free-text "other" lines.
+The eighteen mapped lines account for a median 67% of total expenses; the remainder is mostly those.
+
 The functional-expense split sums to the filer's own Part IX total in only 93.8% of 990s, while
 Part IX total matches Part I total in 99.96%. That 6% is source data quality, not a mapping fault —
 do not "fix" it.

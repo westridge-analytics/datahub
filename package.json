@@ -1,0 +1,11 @@
+{
+  "name": "westridge-datahub-tools",
+  "private": true,
+  "description": "Repo-root tooling. The Next app lives in apps/web with its own package.json.",
+  "scripts": {
+    "build:qa-doc": "node scripts/build_qa_checklist_docx.js docs/Westridge-990-Expert-QA-Checklist.docx"
+  },
+  "devDependencies": {
+    "docx": "^9.5.1"
+  }
+}

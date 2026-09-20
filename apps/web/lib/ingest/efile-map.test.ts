@@ -121,6 +121,64 @@ describe('mapEfileReturn — Form 990', () => {
   })
 })
 
+describe('mapEfileReturn — Form 990 Part IX expense categories', () => {
+  // The QA reviewer's one finding: the new data carried the three-way functional
+  // split but none of the expense *categories* the 3.75M historical SOI rows
+  // have. The two sources populated disjoint columns — e-file had
+  // program/G&A/fundraising at 94.7% and every line item at 0%; SOI the exact
+  // reverse. These assert the line items are read, so that cannot recur.
+  const res = mapEfileReturn(load('efile-990.xml'), OPTS)
+
+  test('reads Part IX line items, not only the functional split', () => {
+    assert.ok(res.ok)
+    // This fixture is a small filer; these are the lines it actually reports.
+    assert.equal(res.row.accounting_fees, 1992, 'FeesForServicesAccountingGrp/TotalAmt')
+    assert.equal(res.row.occupancy, 14917, 'OccupancyGrp/TotalAmt')
+    assert.equal(res.row.it_expenses, 1799, 'InformationTechnologyGrp/TotalAmt')
+    assert.equal(res.row.depreciation, 6641, 'DepreciationDepletionGrp/TotalAmt')
+    assert.equal(res.row.insurance, 2930, 'InsuranceGrp/TotalAmt')
+    assert.equal(res.row.grants_to_govts, 500, 'GrantsToDomesticOrgsGrp/TotalAmt')
+  })
+
+  test('line items read column A, the same basis as total_expenses', () => {
+    assert.ok(res.ok)
+    // Part IX column A is the whole-organisation figure. Reading a functional
+    // column instead would silently understate every category.
+    const occupancyTotal = 14917
+    assert.equal(res.row.occupancy, occupancyTotal)
+    assert.notEqual(res.row.occupancy, res.row.ga_expenses,
+      'occupancy must be its own line, not a functional column')
+  })
+
+  test('a line the filer did not report stays null rather than becoming zero', () => {
+    assert.ok(res.ok)
+    // This filer reports no payroll taxes or pension contributions at all.
+    assert.equal(res.row.payroll_taxes, null)
+    assert.equal(res.row.pension_contributions, null)
+  })
+
+  test('the functional split is still mapped — the two are not alternatives', () => {
+    assert.ok(res.ok)
+    assert.equal(typeof res.row.program_expenses, 'number')
+    assert.equal(typeof res.row.ga_expenses, 'number')
+    assert.equal(typeof res.row.fundraising_expenses, 'number')
+  })
+
+  test('every Part IX column the concordance names is writable', async () => {
+    // Guards the failure mode that already happened once: a column mapped from
+    // the XML but absent from the write contract is dropped, not rejected.
+    const { UPSERT_COLUMNS } = await import('./upsert-sql.ts')
+    const writable = new Set(UPSERT_COLUMNS.map((c) => c.name))
+    const lineItems = [
+      'comp_officers', 'comp_disqualified', 'comp_other_salaries', 'pension_contributions',
+      'employee_benefits', 'payroll_taxes', 'management_fees', 'legal_fees', 'accounting_fees',
+      'professional_fundraising_fees', 'occupancy', 'travel', 'it_expenses', 'depreciation',
+      'insurance', 'grants_to_govts', 'grants_to_individuals', 'grants_to_foreign',
+    ]
+    assert.deepEqual(lineItems.filter((c) => !writable.has(c)), [])
+  })
+})
+
 describe('mapEfileReturn — Form 990-EZ', () => {
   const res = mapEfileReturn(load('efile-990ez.xml'), { sourceFile: 'x.zip' })
 

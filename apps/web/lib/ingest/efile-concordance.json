@@ -17,9 +17,7 @@
     "Note the post-ASU-2016-14 vocabulary: NoDonorRestriction/DonorRestriction",
     "net assets. The pre-2018 TempRstr/PrmnntRstr elements do not appear at all."
   ],
-
   "namespace": "http://www.irs.gov/efile",
-
   "header": {
     "ein": "ReturnHeader/Filer/EIN",
     "name": "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt",
@@ -28,7 +26,6 @@
     "return_type": "ReturnHeader/ReturnTypeCd",
     "submission_ts": "ReturnHeader/ReturnTs"
   },
-
   "forms": {
     "990": {
       "root": "ReturnData/IRS990",
@@ -52,10 +49,28 @@
         "ppe": "LandBldgEquipBasisNetGrp/EOYAmt",
         "unrestr_net_assets": "NoDonorRestrictionNetAssetsGrp/EOYAmt",
         "restr_net_assets": "DonorRestrictionNetAssetsGrp/EOYAmt",
-        "num_employees": "TotalEmployeeCnt"
-      }
+        "num_employees": "TotalEmployeeCnt",
+        "comp_officers": "CompCurrentOfcrDirectorsGrp/TotalAmt",
+        "comp_disqualified": "CompDisqualPersonsGrp/TotalAmt",
+        "comp_other_salaries": "OtherSalariesAndWagesGrp/TotalAmt",
+        "pension_contributions": "PensionPlanContributionsGrp/TotalAmt",
+        "employee_benefits": "OtherEmployeeBenefitsGrp/TotalAmt",
+        "payroll_taxes": "PayrollTaxesGrp/TotalAmt",
+        "management_fees": "FeesForServicesManagementGrp/TotalAmt",
+        "legal_fees": "FeesForServicesLegalGrp/TotalAmt",
+        "accounting_fees": "FeesForServicesAccountingGrp/TotalAmt",
+        "professional_fundraising_fees": "FeesForServicesProfFundraising/TotalAmt",
+        "occupancy": "OccupancyGrp/TotalAmt",
+        "travel": "TravelGrp/TotalAmt",
+        "it_expenses": "InformationTechnologyGrp/TotalAmt",
+        "depreciation": "DepreciationDepletionGrp/TotalAmt",
+        "insurance": "InsuranceGrp/TotalAmt",
+        "grants_to_govts": "GrantsToDomesticOrgsGrp/TotalAmt",
+        "grants_to_individuals": "GrantsToDomesticIndividualsGrp/TotalAmt",
+        "grants_to_foreign": "ForeignGrantsGrp/TotalAmt"
+      },
+      "$note": "Part IX line items read column A (TotalAmt) \u2014 the whole-organisation figure, the same basis as total_expenses. The three functional columns (ProgramServicesAmt / ManagementAndGeneralAmt / FundraisingAmt) stay mapped to program_expenses / ga_expenses / fundraising_expenses; the two answer different questions and the SOI extracts populate only the line items, so dropping either would leave a gap across sources."
     },
-
     "990EZ": {
       "root": "ReturnData/IRS990EZ",
       "amended_flag": "AmendedReturnInd",
@@ -69,11 +84,11 @@
         "program_revenue": "ProgramServiceRevenueAmt",
         "investment_income": "InvestmentIncomeAmt",
         "program_expenses": "TotalProgramServiceExpensesAmt",
-        "cash_equiv": "CashSavingsAndInvestmentsGrp/EOYAmt"
+        "cash_equiv": "CashSavingsAndInvestmentsGrp/EOYAmt",
+        "occupancy": "OccupancyRentUtltsAndMaintAmt"
       },
-      "$note": "990-EZ has no functional-expense split, so ga_expenses and fundraising_expenses stay null. other_revenue is derived."
+      "$note": "990-EZ has no functional-expense split, so ga_expenses and fundraising_expenses stay null. other_revenue is derived. The EZ has no Part IX. Its expense lines are coarser and mostly combined (SalariesOtherCompEmplBnftAmt merges salaries, other compensation and benefits), so only occupancy maps cleanly to an existing column."
     },
-
     "990PF": {
       "root": "ReturnData/IRS990PF",
       "amended_flag": "AmendedReturnInd",
@@ -91,17 +106,21 @@
         "accounting_fees": "AnalysisOfRevenueAndExpenses/AccountingFeesRevAndExpnssAmt",
         "occupancy": "AnalysisOfRevenueAndExpenses/OccupancyRevAndExpnssAmt",
         "depreciation": "AnalysisOfRevenueAndExpenses/DeprecAndDpltnRevAndExpnssAmt",
-        "grants_to_govts": "AnalysisOfRevenueAndExpenses/ContriPaidRevAndExpnssAmt"
+        "grants_to_govts": "AnalysisOfRevenueAndExpenses/ContriPaidRevAndExpnssAmt",
+        "comp_officers": "AnalysisOfRevenueAndExpenses/CompOfcrDirTrstRevAndExpnssAmt",
+        "comp_other_salaries": "AnalysisOfRevenueAndExpenses/OthEmplSlrsWgsRevAndExpnssAmt"
       },
-      "$note": "A private foundation has no program-service revenue line, so program_revenue stays null. The four-column PF layout (RevAndExpnss / NetInvstIncm / AdjNetIncm / DsbrsChrtbl) is deliberately read from the RevAndExpnss column only, which is the books figure comparable to a 990's totals."
+      "$note": "A private foundation has no program-service revenue line, so program_revenue stays null. The four-column PF layout (RevAndExpnss / NetInvstIncm / AdjNetIncm / DsbrsChrtbl) is deliberately read from the RevAndExpnss column only, which is the books figure comparable to a 990's totals. Part I expense lines are mapped only where they are 1:1 with a column: PF combines pension plans with employee benefits, and travel with conferences and meetings, so those lines are left unmapped rather than loaded into a column that means something narrower."
     }
   },
-
   "derived": [
     {
       "column": "other_revenue",
       "rule": "revenue_residual",
-      "applies_to": ["990EZ", "990PF"],
+      "applies_to": [
+        "990EZ",
+        "990PF"
+      ],
       "$note": "total_revenue minus contributions, program_revenue and investment_income. The 990 reports CYOtherRevenueAmt directly and is excluded. Matches how scripts/ingest.py derives it for the SOI extracts."
     }
   ]

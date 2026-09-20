@@ -33,16 +33,36 @@ here would most likely mean we picked the wrong *line*, not that we misread it.
 We read **Part I line 12** (`CYTotalRevenueAmt`). Part VIII reports a total revenue figure too, and
 for some filers they differ. Is Part I the figure a researcher expects?
 
-### A3 `[ ]` Is the functional expense split usable as mapped?
-`program_expenses` / `ga_expenses` / `fundraising_expenses` come from **Part IX column A** split
-(`TotalFunctionalExpensesGrp`).
+### A3 `[x]` Is the functional expense split usable as mapped? — RESOLVED
+**Reviewer's finding:** the new data carried only the three-way functional allocation, not the
+expense categories from the form. Correct, and now fixed.
 
-Measured across 7,180 returns: the three columns sum to the filer's own Part IX total in **93.8%**
-of cases. The remaining 6% are filers whose own split does not add up. Part IX total agrees with
-Part I total in 99.96%, so `total_expenses` is sound.
+The two sources had populated disjoint columns:
 
-**Question:** should the ~6% inconsistent splits be stored as filed, flagged, or nulled? We
-currently store them as filed.
+| | e-file | SOI |
+|---|---|---|
+| program / G&A / fundraising | 94.7% | 0.0% |
+| comp_officers | 0.0% | 76.1% |
+| occupancy, travel, insurance, … | 0.0% | 68.2% |
+
+Eighteen Part IX line items are now mapped — officer and other compensation, pension, benefits,
+payroll taxes, management/legal/accounting/fundraising fees, occupancy, travel, IT, depreciation,
+insurance, and the three grant lines. They read **column A (TotalAmt)**, the whole-organisation
+figure on the same basis as total expenses. Measured fill rates run 21–80%, comparable to the SOI
+side.
+
+The functional split is kept as well: the two answer different questions, and the historical rows
+have only the line items, so dropping either would leave a gap across sources.
+
+**Two things still open for you:**
+- **Seven Part IX lines have no column** — office expenses, advertising, interest,
+  conferences/meetings, payments to affiliates, benefits to members, and the free-text "other"
+  lines. The mapped eighteen cover a median 67% of total expenses; most of the rest is these. Worth
+  adding?
+- **990-PF and 990-EZ map fewer lines,** because those forms combine categories: PF merges pension
+  with benefits and travel with conferences; the EZ merges salaries with benefits. Rather than load
+  a combined figure into a narrower column, they are left null. Is that the right call, or would a
+  combined figure be more useful than nothing?
 
 ### A4 `[ ]` Restricted net assets after the 2018 standard change
 The e-file XML uses the post-ASU-2016-14 vocabulary: a single donor-restricted figure

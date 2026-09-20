@@ -5,3 +5,8 @@
 
 # session-local state for scripts/reverse_test_load.py
 .reversal-snapshot.json
+
+# bulk IRS source data (3.8 GB) — fetched, not authored
+docs/990_data/file_data/
+docs/990_field_reference.xlsx
+scripts/eo_bmf.csv
