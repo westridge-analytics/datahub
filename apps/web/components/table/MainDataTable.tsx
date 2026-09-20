@@ -527,8 +527,12 @@ export default function MainDataTable() {
     setExportLoading(true)
     setExportError(null)
     try {
+      // Send the visible columns so the download matches the table. Without
+      // `cols` the route falls back to its original eleven, which is how every
+      // column added through the picker used to go missing from the export.
       const qs = buildParams({ search: debouncedSearch, filters, sortBy, sortDir, page: 1, pageSize: 1 })
-      const res = await fetch(`/api/export?${qs}&format=${format}`)
+      const cols = encodeURIComponent(orderedVisible.join(','))
+      const res = await fetch(`/api/export?${qs}&format=${format}&cols=${cols}`)
       if (!res.ok) {
         const body = await res.json().catch(() => null)
         setExportError(body?.error ?? `Export failed (${res.status})`)

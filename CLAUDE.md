@@ -46,6 +46,24 @@ Tests use Node's built-in `node:test` runner — no install needed. Each `descri
 - **Path B (no filters, no search)**: Materialized CTE sorts filings by index first, then joins orgs. Avoids full hash join on cold load.
 - **Path C (state/sector filters)**: Standard join with WHERE.
 
+### The export writes the columns that are on screen
+`/api/export` takes the same query string as `/api/filings` plus `cols` — the Main Data table's
+visible-column list. Both the SELECT list and the header row are generated from
+`lib/table-columns.ts`, the same catalogue `ColumnPicker` renders, so a column added there is
+exportable with no second edit.
+
+It used to carry a hard-coded eleven columns, so everything the picker had gained since
+(compensation, fees, grants, governance flags, headcount) was visible in the table and missing from
+the download. `lib/export-columns.test.ts` asserts that every picker column survives resolution,
+and runs the *generated* SELECT against the real schema so a key that stops matching a column name
+fails a test rather than a user's download.
+
+Requests with no `cols` fall back to the original eleven — that is the Institution page's export
+link, which sends none. Unknown keys are ignored rather than rejected (a stale bookmark still
+downloads the rest), and a list of nothing but unknown keys falls back too, because an empty SELECT
+list is a 500. Keys are matched against the catalogue, never interpolated, which is what keeps the
+dynamic SELECT safe.
+
 ### Search params isolation
 The search path uses a separate `searchParams` array (`[query, %query%]`) passed to both the data and count queries. Never merge search params into the shared `params` array — Postgres rejects queries when param count doesn't match placeholders.
 

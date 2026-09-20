@@ -2,23 +2,13 @@ import { type NextRequest } from 'next/server'
 import { rawQuery } from '@/lib/db'
 import * as XLSX from 'xlsx'
 import { ALLOWED_SORT_COLUMNS, parseFilingFilters } from '@/lib/filing-filters'
-
-interface ExportRow {
-  ein: string
-  name: string
-  state: string
-  sector: string | null
-  cohort_name: string | null
-  fiscal_year: number
-  total_revenue: number | null
-  total_expenses: number | null
-  net_income: number | null
-  total_assets: number | null
-  total_net_assets: number | null
-}
+import { buildSelectList, exportCell, resolveExportColumns } from '@/lib/export-columns'
 
 // Accepts the exact same query-string contract as GET /api/filings (plus
-// `format`), so "export" always means "export what's on screen right now."
+// `format` and `cols`), so "export" always means "export what's on screen
+// right now" — the same rows AND the same columns. `cols` is the Main Data
+// table's visible-column list; without it the export falls back to the
+// original eleven columns, which is what the Institution page's link sends.
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
 
@@ -39,6 +29,11 @@ export async function GET(request: NextRequest) {
   if (sp.get('cohort_id') && cohortId !== null && isNaN(cohortId)) {
     return Response.json({ error: 'cohort_id must be an integer' }, { status: 400 })
   }
+
+  // Column keys are matched against the table's catalogue, never interpolated
+  // from the request — cohortId is the only value inlined, and it is an integer
+  // by the check above.
+  const columns = resolveExportColumns(sp.get('cols'), cohortId)
 
   // Institution page exports a single org's full filing history by EIN.
   const ein = sp.get('ein')
@@ -80,23 +75,10 @@ export async function GET(request: NextRequest) {
     const cohortJoin = cohortId !== null
       ? `JOIN cohort_members cm ON cm.ein = f.ein AND cm.cohort_id = ${cohortId}`
       : ''
-    const cohortSelect = cohortId !== null
-      ? `(SELECT name FROM cohorts WHERE id = ${cohortId}) AS cohort_name`
-      : `(SELECT c.name FROM cohort_members cm2 JOIN cohorts c ON c.id = cm2.cohort_id WHERE cm2.ein = f.ein LIMIT 1) AS cohort_name`
 
     const queryText = `
       SELECT
-        f.ein,
-        o.name,
-        o.state,
-        o.sector,
-        ${cohortSelect},
-        f.fiscal_year,
-        f.total_revenue,
-        f.total_expenses,
-        (f.total_revenue - f.total_expenses) AS net_income,
-        f.total_assets,
-        f.total_net_assets
+        ${buildSelectList(columns)}
       ${fromClause}
       ${cohortJoin}
       WHERE TRUE ${whereExtra}
@@ -104,16 +86,14 @@ export async function GET(request: NextRequest) {
       LIMIT 50000
     `
 
-    const rows = (await rawQuery(queryText, queryParams)) as ExportRow[]
+    const rows = await rawQuery<Record<string, unknown>>(queryText, queryParams)
     const einSlug = ein?.replace(/[^0-9-]/g, '')
     const filenameBase = einSlug ? `990-export-${einSlug}` : '990-export'
 
-    if (format === 'csv') {
-      const header = [
-        'EIN', 'Organization', 'State', 'Sector', 'Cohort',
-        'Year', 'Revenue', 'Expenses', 'Net Income', 'Total Assets', 'Net Assets',
-      ]
+    const header = columns.map(c => c.label)
+    const body = rows.map(row => columns.map(col => exportCell(col, row)))
 
+    if (format === 'csv') {
       function csvCell(v: unknown): string {
         if (v == null) return ''
         const str = String(v)
@@ -124,21 +104,7 @@ export async function GET(request: NextRequest) {
       }
 
       const lines: string[] = [header.map(csvCell).join(',')]
-      for (const row of rows) {
-        lines.push([
-          row.ein,
-          row.name,
-          row.state,
-          row.sector ?? '',
-          row.cohort_name ?? '',
-          row.fiscal_year,
-          row.total_revenue ?? '',
-          row.total_expenses ?? '',
-          row.net_income ?? '',
-          row.total_assets ?? '',
-          row.total_net_assets ?? '',
-        ].map(csvCell).join(','))
-      }
+      for (const row of body) lines.push(row.map(csvCell).join(','))
 
       const csv = lines.join('\r\n')
       return new Response(csv, {
@@ -150,27 +116,7 @@ export async function GET(request: NextRequest) {
       })
     } else {
       // XLSX
-      const wsData = [
-        [
-          'EIN', 'Organization', 'State', 'Sector', 'Cohort',
-          'Year', 'Revenue', 'Expenses', 'Net Income', 'Total Assets', 'Net Assets',
-        ],
-        ...rows.map((row) => [
-          row.ein,
-          row.name,
-          row.state,
-          row.sector ?? '',
-          row.cohort_name ?? '',
-          row.fiscal_year,
-          row.total_revenue ?? '',
-          row.total_expenses ?? '',
-          row.net_income ?? '',
-          row.total_assets ?? '',
-          row.total_net_assets ?? '',
-        ]),
-      ]
-
-      const ws = XLSX.utils.aoa_to_sheet(wsData)
+      const ws = XLSX.utils.aoa_to_sheet([header, ...body])
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '990 Filings')
 

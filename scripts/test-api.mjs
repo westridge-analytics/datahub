@@ -204,6 +204,24 @@ describe('Export', () => {
     assert.notEqual(res.status, 405, 'ein-scoped export rejected GET')
     assert.ok([302, 307, 200].includes(res.status), `expected an auth redirect or success, got ${res.status}`)
   })
+
+  // The table sends its visible columns as `cols`; the route builds the SELECT
+  // list from them. Auth-gating means this suite can only assert routing —
+  // the column resolution itself (including that every picker column is
+  // exportable, and that the generated SQL is valid) is covered by
+  // apps/web/lib/export-columns.test.ts under `npm run test:unit`.
+  test('GET with a cols list is routed (not 400/405)', async () => {
+    const qs = new URLSearchParams({
+      format: 'csv',
+      cols: 'ein,name,fiscal_year,comp_officers,legal_fees,has_lobbying,num_employees',
+      sort_by: 'total_revenue',
+      sort_dir: 'desc',
+    })
+    const res = await fetch(`${BASE}/api/export?${qs}`, { redirect: 'manual' })
+    assert.notEqual(res.status, 405, 'export route rejected GET with cols')
+    assert.notEqual(res.status, 400, 'export route rejected a valid cols list')
+    assert.ok([302, 307, 200].includes(res.status), `expected an auth redirect or success, got ${res.status}`)
+  })
 })
 
 describe('Ingestion endpoints', () => {
