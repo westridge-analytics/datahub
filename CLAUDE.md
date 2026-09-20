@@ -120,6 +120,17 @@ Two gotchas worth keeping:
   wrong does not error — it silently stops matching existing rows, so every e-file row looks new
   and the conflict check reports nothing.
 
+**SOI writes an explicit 0 where e-file omits the element.** Comparing raw fill rates between the
+two sources is misleading: SOI populates `professional_fundraising_fees` on 76.1% of 990 rows
+against e-file's 21.1%, but 97% of SOI's values are zero versus 85.6% of e-file's. Counting only
+**non-zero** values, e-file carries more data in **18 of 18** expense columns — accounting fees
+70.6% vs 49.2%, insurance 71.9% vs 48.8%, occupancy 58.7% vs 41.5%.
+
+So a null in an e-file row and a 0 in an SOI row usually mean the same thing: the filer reported
+nothing on that line. Any cross-source analysis of an expense column should treat them alike, or
+compare non-zero rates. This is the same convention behind the ±1 differences D1 found in
+`total_liabilities`.
+
 **Part IX line items and the functional split are both mapped, and are not alternatives.** The
 eighteen line-item columns (`comp_officers`, `occupancy`, `travel`, `insurance`, `grants_to_*`, …)
 read Part IX **column A** (`TotalAmt`) — the whole-organisation figure, the same basis as

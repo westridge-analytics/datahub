@@ -54,6 +54,25 @@ side.
 The functional split is kept as well: the two answer different questions, and the historical rows
 have only the line items, so dropping either would leave a gap across sources.
 
+**Backfilled 20 Sep:** all 1.08M previously-loaded e-file rows now carry these columns, filled in
+place without reloading.
+
+**A finding worth your view.** Raw fill rates suggested e-file had less data than SOI — but SOI
+writes an explicit **0** where e-file simply omits the element. Counting only non-zero values,
+e-file carries more in **18 of 18** expense columns:
+
+| Column | e-file non-zero | SOI non-zero |
+|---|---|---|
+| accounting fees | 70.6% | 49.2% |
+| insurance | 71.9% | 48.8% |
+| occupancy | 58.7% | 41.5% |
+| travel | 47.1% | 32.7% |
+| officer compensation | 43.8% | 34.3% |
+
+So a null in an e-file row and a 0 in an SOI row generally mean the same thing: nothing reported on
+that line. **Should the two be normalised to one convention?** This is the same phenomenon behind
+the ±1 differences in D1 — worth one answer covering both.
+
 **Two things still open for you:**
 - **Seven Part IX lines have no column** — office expenses, advertising, interest,
   conferences/meetings, payments to affiliates, benefits to members, and the free-text "other"
