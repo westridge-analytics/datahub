@@ -1,6 +1,34 @@
 import { type NextRequest } from 'next/server'
 import { sql } from '@/lib/db'
 
+// Every member, from cohort_members itself. The page used to derive members from a 500-row page
+// of /api/filings, which at ~14 filings per org showed only the first few dozen alphabetically
+// and never showed a member with no filings.
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: idStr } = await params
+  const cohortId = parseInt(idStr, 10)
+  if (isNaN(cohortId)) {
+    return Response.json({ error: 'Invalid cohort id' }, { status: 400 })
+  }
+
+  try {
+    const rows = await sql`
+      SELECT cm.cohort_id, cm.ein, COALESCE(o.name, cm.ein) AS name, o.state
+      FROM cohort_members cm
+      LEFT JOIN organizations o ON o.ein = cm.ein
+      WHERE cm.cohort_id = ${cohortId}
+      ORDER BY o.name NULLS LAST, cm.ein
+    `
+    return Response.json({ data: rows })
+  } catch (err) {
+    console.error('[GET /api/cohorts/[id]/members]', err)
+    return Response.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

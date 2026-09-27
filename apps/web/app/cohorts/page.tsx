@@ -84,34 +84,10 @@ function CohortsPageInner() {
     setLoadingMembers(true)
     setMembers([])
     try {
-      // Fetch all filings for cohort members via the orgs endpoint filtered by cohort
-      // Use a dedicated endpoint: GET /api/cohorts/[id]/members — but it doesn't exist,
-      // so we fetch org list from the cohort's member list via filings with cohort filter
-      // The cohorts route doesn't expose members list directly. We'll derive from the
-      // visualization cohorts or query filings with cohort filter.
-      // Actually, looking at the schema the cohort_members table has cohort_id and ein.
-      // The GET /api/cohorts doesn't return members. We need to call a members endpoint.
-      // The members route only has POST and DELETE. We'll build a custom approach:
-      // fetch filings?cohort_id=X which should return filing rows with member info.
-      // But we don't know that endpoint. Let's try /api/filings?cohort_id=...
-      const res = await fetch(`/api/filings?cohort_id=${cohortId}&page_size=500&sort_by=name&sort_dir=asc`)
+      const res = await fetch(`/api/cohorts/${cohortId}/members`)
       if (res.ok) {
-        const data: { data: Array<{ ein: string; name: string; state: string }> } = await res.json()
-        // filings returns FilingWithOrg[] — deduplicate by EIN
-        const seen = new Set<string>()
-        const uniqueMembers: CohortMemberWithOrg[] = []
-        for (const row of data.data ?? []) {
-          if (!seen.has(row.ein)) {
-            seen.add(row.ein)
-            uniqueMembers.push({
-              cohort_id: cohortId,
-              ein: row.ein,
-              name: row.name ?? row.ein,
-              state: row.state ?? '',
-            })
-          }
-        }
-        setMembers(uniqueMembers)
+        const data: { data: CohortMemberWithOrg[] } = await res.json()
+        setMembers(data.data ?? [])
       }
     } finally {
       setLoadingMembers(false)

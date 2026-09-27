@@ -197,6 +197,20 @@ describe('One return, one row', () => {
   })
 })
 
+describe('Cohort members', () => {
+  // The cohorts page once derived members from a 500-row page of filings, which showed only the
+  // first few dozen orgs of a large cohort. The members endpoint must return every one.
+  test('GET /api/cohorts/:id/members returns the full member_count', async () => {
+    const cohorts = await get('/api/cohorts')
+    const list = Array.isArray(cohorts) ? cohorts : cohorts.data
+    const big = [...list].sort((a, b) => Number(b.member_count) - Number(a.member_count))[0]
+    if (!big || Number(big.member_count) === 0) return
+    const json = await get(`/api/cohorts/${big.id}/members`)
+    assert.equal(json.data.length, Number(big.member_count))
+    assert.ok(json.data.every(m => m.ein && m.name), 'every member has an ein and a name')
+  })
+})
+
 describe('Pagination', () => {
   test('page 2 returns different rows than page 1', async () => {
     const [p1, p2] = await Promise.all([filings({ page: '1' }), filings({ page: '2' })])
