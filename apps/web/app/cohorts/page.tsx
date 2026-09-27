@@ -274,7 +274,9 @@ function CohortsPageInner() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+    // minHeight: 0 lets this column shrink to <main>'s height instead of growing to fit every
+    // member — without it <main>'s overflow: hidden clips the list and the panel never scrolls.
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <PageHeader
         title="Cohorts"
         subtitle="Build and manage peer groups for benchmarking"

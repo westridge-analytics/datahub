@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import type { Organization, Filing } from '@/types'
 import { formatCurrency, formatEIN, formatPercent } from '@/lib/format'
+import { periodLabels, sortByPeriod } from '@/lib/filing-periods'
 import { calcAllMethods, getMethodConfidence } from '@/lib/metrics/unrestricted-cash'
 import {
   calcMonthlyOpex,
@@ -245,18 +246,23 @@ export default function InstitutionView({
   organization: Organization
   filings: Filing[]
 }) {
-  const sortedFilings = [...filings].sort((a, b) => a.fiscal_year - b.fiscal_year)
-  const latestYear = sortedFilings.length > 0 ? sortedFilings[sortedFilings.length - 1].fiscal_year : 0
-  const [selectedYear, setSelectedYear] = useState<number>(latestYear)
+  // Selected by filing id, not fiscal year: a change of year end puts two real returns in one
+  // fiscal year (see lib/filing-periods.ts), and keying by year made the second unreachable.
+  const sortedFilings = sortByPeriod(filings)
+  const labels = periodLabels(filings)
+  const labelOf = (f: Filing) => labels.get(f.id)?.label ?? `FY ${f.fiscal_year}`
+  const latestId = sortedFilings.length > 0 ? sortedFilings[sortedFilings.length - 1].id : 0
+  const [selectedId, setSelectedId] = useState<number>(latestId)
 
-  const selectedFiling = (sortedFilings.find(f => f.fiscal_year === selectedYear) ?? sortedFilings[sortedFilings.length - 1]) as FilingWithReconciliation | undefined
+  const selectedFiling = (sortedFilings.find(f => f.id === selectedId) ?? sortedFilings[sortedFilings.length - 1]) as FilingWithReconciliation | undefined
+  const selectedLabel = selectedFiling ? labelOf(selectedFiling) : ''
   const hasException = selectedFiling?.has_exception === true
   const reconciliationStatus = selectedFiling?.reconciliation_status ?? null
   const isReconciled = reconciliationStatus !== 'exception'
 
   // Chart: up to last 5 years centered on selected, or all if <=5
   const chartFilings = (() => {
-    const idx = sortedFilings.findIndex(f => f.fiscal_year === selectedYear)
+    const idx = sortedFilings.findIndex(f => f.id === selectedFiling?.id)
     if (idx === -1 || sortedFilings.length <= 5) {
       return sortedFilings.slice(-5)
     }
@@ -272,7 +278,8 @@ export default function InstitutionView({
     return Number.isFinite(n) ? n : null
   }
   const chartData = chartFilings.map(f => ({
-    year: f.fiscal_year,
+    id: f.id,
+    year: labelOf(f),
     revenue: toNum(f.total_revenue),
     expenses: toNum(f.total_expenses),
   }))
@@ -289,7 +296,7 @@ export default function InstitutionView({
   ]
 
   const prevFiling = selectedFiling
-    ? (sortedFilings[sortedFilings.findIndex(f => f.fiscal_year === selectedFiling.fiscal_year) - 1] ?? null)
+    ? (sortedFilings[sortedFilings.findIndex(f => f.id === selectedFiling.id) - 1] ?? null)
     : null
 
   const customMetrics = selectedFiling ? {
@@ -445,11 +452,13 @@ export default function InstitutionView({
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {sortedFilings.map((f) => {
-              const selected = f.fiscal_year === selectedYear
+              const selected = f.id === selectedFiling?.id
+              const shortYear = labels.get(f.id)?.shortYear
               return (
                 <button
-                  key={f.fiscal_year}
-                  onClick={() => setSelectedYear(f.fiscal_year)}
+                  key={f.id}
+                  onClick={() => setSelectedId(f.id)}
+                  title={shortYear ? 'Short-period return — the organization changed its fiscal year end' : undefined}
                   style={{
                     padding: '6px 14px',
                     borderRadius: '6px',
@@ -466,8 +475,9 @@ export default function InstitutionView({
                     minWidth: '72px',
                   }}
                 >
-                  <span>FY {f.fiscal_year}</span>
+                  <span>{labelOf(f)}</span>
                   <span style={{ fontSize: '11px', opacity: 0.85 }}>{formatCompact(f.total_revenue)}</span>
+                  {shortYear && <span style={{ fontSize: '10px', opacity: 0.85, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Short year</span>}
                 </button>
               )
             })}
@@ -513,9 +523,9 @@ export default function InstitutionView({
               <LineChart
                 data={chartData}
                 onClick={(e: unknown) => {
-                  const ev = e as { activePayload?: Array<{ payload?: { year?: number } }> } | null
-                  const year = ev?.activePayload?.[0]?.payload?.year
-                  if (year) setSelectedYear(year)
+                  const ev = e as { activePayload?: Array<{ payload?: { id?: number } }> } | null
+                  const id = ev?.activePayload?.[0]?.payload?.id
+                  if (id) setSelectedId(id)
                 }}
                 style={{ cursor: 'pointer' }}
               >
@@ -523,7 +533,6 @@ export default function InstitutionView({
                 <XAxis
                   dataKey="year"
                   tick={{ fontSize: 12, fill: C.textTertiary }}
-                  tickFormatter={(v) => `FY ${v}`}
                   axisLine={{ stroke: C.border }}
                   tickLine={false}
                 />
@@ -536,7 +545,6 @@ export default function InstitutionView({
                 />
                 <Tooltip
                   formatter={(val, name) => [formatCurrency(val as number), name]}
-                  labelFormatter={(v) => `FY ${v}`}
                   contentStyle={{
                     border: `1px solid ${C.border}`,
                     borderRadius: '6px',
@@ -580,7 +588,7 @@ export default function InstitutionView({
               marginBottom: '10px',
             }}
           >
-            Unrestricted Cash Estimate — FY {selectedYear}
+            Unrestricted Cash Estimate — {selectedLabel}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
             {methodDefs.map(({ key, label, formula, value }) => {
@@ -657,7 +665,7 @@ export default function InstitutionView({
                 marginBottom: '10px',
               }}
             >
-              Financial Statements — FY {selectedYear}
+              Financial Statements — {selectedLabel}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
 
@@ -781,7 +789,7 @@ export default function InstitutionView({
                       borderBottom: `1px solid ${C.border}`,
                     }}
                   >
-                    Custom Metrics — FY {selectedYear}
+                    Custom Metrics — {selectedLabel}
                   </div>
                   <div style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 32px' }}>
                     <div>

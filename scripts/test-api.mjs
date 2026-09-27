@@ -173,6 +173,30 @@ describe('Filters', () => {
   })
 })
 
+describe('One return, one row', () => {
+  // The IRS extracts carried some returns under two tax periods (e.g. 201512 in one year's file,
+  // 201506 in the next), which showed as two rows with identical figures for one year.
+  // scripts/dedupe-periods.mjs moves the extra copy into filings_duplicates.
+  async function years(ein) {
+    const json = await filings({ search: ein })
+    const counts = {}
+    for (const r of json.data.filter(r => r.ein === ein)) counts[r.fiscal_year] = (counts[r.fiscal_year] ?? 0) + 1
+    return counts
+  }
+
+  test('20-4718511 has one FY2015 row', async () => {
+    const c = await years('20-4718511')
+    assert.equal(c[2015], 1, `FY2015 rows: ${c[2015]}`)
+  })
+
+  test('56-2043649 has one row for FY2012 and FY2013, and keeps its genuine 2017 short year', async () => {
+    const c = await years('56-2043649')
+    assert.equal(c[2012], 1, `FY2012 rows: ${c[2012]}`)
+    assert.equal(c[2013], 1, `FY2013 rows: ${c[2013]}`)
+    assert.equal(c[2017], 2, 'the Mar-2017 full year and Jun-2017 short year are two real returns')
+  })
+})
+
 describe('Pagination', () => {
   test('page 2 returns different rows than page 1', async () => {
     const [p1, p2] = await Promise.all([filings({ page: '1' }), filings({ page: '2' })])

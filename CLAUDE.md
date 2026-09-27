@@ -316,6 +316,23 @@ uploader makes two passes over the file: keys only for the conflict check, then 
 **Do not** reintroduce an unconditional `ON CONFLICT DO UPDATE` here. That was the original
 behaviour and it meant re-uploading an older extract silently overwrote newer data.
 
+### One return can be stored under two tax periods
+The IRS extracts sometimes carry the same return under two periods — 20-4718511's FY2015 return is
+`201512` in `16eofinextract990.dat` and `201506` in `17eofinextract990.dat`, identical figures.
+`(ein, tax_period)` is the key, so both land and the institution page shows the year twice. Both
+rows are faithful to the source; the source is wrong once.
+
+`scripts/dedupe-periods.mjs` (dry run by default, `--apply` to write) moves the extra copy into
+`filings_duplicates` with `duplicate_of` → the kept id. Rule and precedence are in
+`lib/ingest/period-duplicates.ts`: same EIN and form, identical non-zero revenue/expenses/assets/
+liabilities/net assets, periods **less than twelve months apart**. Exactly twelve months apart is
+left alone — a dormant org can repeat itself. Re-run after loading new archives; it is idempotent.
+
+**Not every repeated fiscal year is a duplicate.** A change of year end produces a genuine
+short-period return: 38-3088234 has Sep 2024 and a three-month Dec 2024, both FY2024. So nothing
+may key or select filings by `fiscal_year` alone — `lib/filing-periods.ts` labels them
+("FY 2024 · Dec", "Short year") and `InstitutionView` selects by filing id.
+
 ### Migrations
 Run with `python scripts/run_migration.py <filename>` (defaults to `migrate_expand_filings.sql`):
 - `migrate_expand_filings.sql` — research-grade columns; also creates `filings_raw` (now dropped)
